@@ -101,6 +101,56 @@
       "desc": "Trains infantry."
     }
   },
+  "aiOpponents": [
+    {
+      "id": "bandit-camp",
+      "name": "Bandit Camp",
+      "description": "A disorganized mob hoarding stolen lumber.",
+      "difficulty": "Easy",
+      "distance": 6,
+      "travelTime": 20000,
+      "army": 12,
+      "defense": 10,
+      "loot": { "wood": 420, "clay": 180, "iron": 110, "crop": 160 },
+      "maxResources": { "wood": 600, "clay": 320, "iron": 260, "crop": 260 },
+      "regen": { "wood": 4, "clay": 2, "iron": 1, "crop": 2 },
+      "attackInterval": [120000, 210000],
+      "attackForce": [6, 12],
+      "personality": "Opportunists"
+    },
+    {
+      "id": "iron-tribe",
+      "name": "Iron Tribe",
+      "description": "Nomads clad in salvaged armor with a taste for iron.",
+      "difficulty": "Medium",
+      "distance": 11,
+      "travelTime": 26000,
+      "army": 18,
+      "defense": 18,
+      "loot": { "wood": 260, "clay": 240, "iron": 420, "crop": 220 },
+      "maxResources": { "wood": 480, "clay": 480, "iron": 640, "crop": 400 },
+      "regen": { "wood": 3, "clay": 3, "iron": 5, "crop": 3 },
+      "attackInterval": [180000, 300000],
+      "attackForce": [10, 18],
+      "personality": "Disciplined"
+    },
+    {
+      "id": "dune-king",
+      "name": "Dune King Outpost",
+      "description": "A fortified oasis ruled by the Dune King.",
+      "difficulty": "Hard",
+      "distance": 16,
+      "travelTime": 32000,
+      "army": 26,
+      "defense": 28,
+      "loot": { "wood": 360, "clay": 380, "iron": 360, "crop": 520 },
+      "maxResources": { "wood": 640, "clay": 640, "iron": 640, "crop": 800 },
+      "regen": { "wood": 5, "clay": 5, "iron": 4, "crop": 6 },
+      "attackInterval": [240000, 360000],
+      "attackForce": [16, 26],
+      "personality": "Relentless"
+    }
+  ],
   "initialState": {
     "resources": { "wood": 750, "clay": 750, "iron": 750, "crop": 750 },
     "maxStorage": 800,
