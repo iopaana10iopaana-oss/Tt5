@@ -262,57 +262,9 @@
         const TICK_RATE = 1000; // 1 second ticks
         const SAVE_KEY = "civitas_save_v1";
         const SPEED_MULTIPLIER = 5; // Speed server!
+        const DATA_PATH = "./civitas-data/game-config.json";
 
         const WEATHER_CHANGE_INTERVAL = 3 * 60 * 1000; // 3 minutes
-        const WEATHER_PATTERNS = [
-            {
-                name: "Clear Skies",
-                icon: "☀️",
-                description: "Stable weather keeps everything balanced.",
-                modifiers: { wood: 1, clay: 1, iron: 1, crop: 1 },
-            },
-            {
-                name: "Spring Rains",
-                icon: "🌧️",
-                description: "Fields thrive, but lumber camps get soggy.",
-                modifiers: { wood: 0.9, clay: 1, iron: 0.95, crop: 1.25 },
-            },
-            {
-                name: "Sandstorm",
-                icon: "🌪️",
-                description: "Visibility is low. Mining slows but clay hardens quickly.",
-                modifiers: { wood: 1, clay: 1.2, iron: 0.8, crop: 0.85 },
-            },
-            {
-                name: "Harvest Moon",
-                icon: "🌕",
-                description: "Crops flourish while artisans focus on ironwork.",
-                modifiers: { wood: 0.95, clay: 0.95, iron: 1.15, crop: 1.2 },
-            },
-        ];
-
-        const FOCUS_OPTIONS = {
-            balanced: {
-                label: "Balanced",
-                description: "Even output across the empire.",
-                modifiers: { wood: 1, clay: 1, iron: 1, crop: 1 },
-            },
-            lumber: {
-                label: "Lumber Rush",
-                description: "+20% wood, -10% other resources.",
-                modifiers: { wood: 1.2, clay: 0.9, iron: 0.9, crop: 0.9 },
-            },
-            masonry: {
-                label: "Clay Rampart",
-                description: "+20% clay, -10% others.",
-                modifiers: { wood: 0.9, clay: 1.2, iron: 0.9, crop: 0.9 },
-            },
-            harvest: {
-                label: "Harvest Focus",
-                description: "+20% crop, -10% other resources.",
-                modifiers: { wood: 0.9, clay: 0.9, iron: 0.9, crop: 1.2 },
-            },
-        };
 
         const COUNCIL_BOOST = {
             duration: 2 * 60 * 1000,
@@ -321,6 +273,88 @@
         };
 
         const MAX_EVENTS = 8;
+
+        const createDefaultFieldsLayout = () =>
+            Array(18)
+                .fill(null)
+                .map((_, i) => {
+                    if (i < 4) return "woodcutter";
+                    if (i < 8) return "claypit";
+                    if (i < 12) return "ironmine";
+                    return "cropland";
+                });
+
+        const createInitialState = (data) => {
+            const template = (data && data.initialState) || {};
+            const layout =
+                template.fieldsLayout && template.fieldsLayout.length === 18
+                    ? template.fieldsLayout
+                    : createDefaultFieldsLayout();
+            const fields = layout.map((type, index) => ({
+                type: type || "cropland",
+                level: 0,
+                id: `field-${index}`,
+            }));
+
+            return {
+                resources:
+                    template.resources ||
+                    { wood: 750, clay: 750, iron: 750, crop: 750 },
+                maxStorage: template.maxStorage ?? 800,
+                maxGranary: template.maxGranary ?? 800,
+                population: template.population ?? 1,
+                weatherIndex: template.weatherIndex ?? 0,
+                nextWeatherChange: Date.now() + WEATHER_CHANGE_INTERVAL,
+                productionFocus: template.productionFocus || "balanced",
+                council:
+                    template.council || { activeUntil: 0, cooldownUntil: 0 },
+                events: template.events || [],
+                fields,
+                buildings:
+                    template.buildings ||
+                    [
+                        { type: "mainbuilding", level: 1, id: "mb1" },
+                        { type: null, level: 0, id: "b2" },
+                        { type: null, level: 0, id: "b3" },
+                        { type: null, level: 0, id: "b4" },
+                        { type: null, level: 0, id: "b5" },
+                        { type: null, level: 0, id: "b6" },
+                        { type: null, level: 0, id: "b7" },
+                        { type: null, level: 0, id: "b8" },
+                    ],
+                constQueue: template.constQueue || [],
+                troops: template.troops || { legionnaire: 0 },
+                trainingQueue: template.trainingQueue || [],
+                missions: template.missions || [],
+                reports: template.reports || [],
+                quests: template.quests || [],
+            };
+        };
+
+        const mergeStateWithDefaults = (saved, base) => {
+            if (!saved) return base;
+            return {
+                ...base,
+                ...saved,
+                quests: saved.quests || base.quests,
+                events: saved.events || base.events,
+                productionFocus: saved.productionFocus || base.productionFocus,
+                council: saved.council || base.council,
+                weatherIndex:
+                    typeof saved.weatherIndex === "number"
+                        ? saved.weatherIndex
+                        : base.weatherIndex,
+                nextWeatherChange:
+                    saved.nextWeatherChange || base.nextWeatherChange,
+                fields: saved.fields || base.fields,
+                buildings: saved.buildings || base.buildings,
+                constQueue: saved.constQueue || base.constQueue,
+                troops: saved.troops || base.troops,
+                trainingQueue: saved.trainingQueue || base.trainingQueue,
+                missions: saved.missions || base.missions,
+                reports: saved.reports || base.reports,
+            };
+        };
 
         const pushEvent = (events = [], message, type = "general") => {
             const entry = {
@@ -348,124 +382,38 @@
             return `${hours.toFixed(1)}h`;
         };
 
-        const BUILDING_TYPES = {
-            woodcutter: { name: "Woodcutter", cost: [40, 100, 50, 60], prod: 10, type: "resource", resType: "wood" },
-            claypit: { name: "Clay Pit", cost: [80, 40, 80, 50], prod: 10, type: "resource", resType: "clay" },
-            ironmine: { name: "Iron Mine", cost: [100, 80, 30, 60], prod: 10, type: "resource", resType: "iron" },
-            cropland: { name: "Cropland", cost: [70, 90, 70, 20], prod: 10, type: "resource", resType: "crop" },
-            mainbuilding: {
-                name: "Main Building",
-                cost: [75, 40, 60, 20],
-                type: "infrastructure",
-                desc: "Reduces construction time.",
-            },
-            warehouse: {
-                name: "Warehouse",
-                cost: [130, 160, 90, 40],
-                type: "infrastructure",
-                desc: "Increases resource capacity.",
-            },
-            granary: {
-                name: "Granary",
-                cost: [80, 100, 70, 20],
-                type: "infrastructure",
-                desc: "Increases crop capacity.",
-            },
-            barracks: {
-                name: "Barracks",
-                cost: [210, 140, 130, 120],
-                type: "infrastructure",
-                desc: "Trains infantry.",
-            },
-        };
-
-        const INITIAL_STATE = {
-            resources: { wood: 750, clay: 750, iron: 750, crop: 750 },
-            maxStorage: 800,
-            maxGranary: 800,
-            population: 1,
-            weatherIndex: 0,
-            nextWeatherChange: Date.now() + WEATHER_CHANGE_INTERVAL,
-            productionFocus: "balanced",
-            council: { activeUntil: 0, cooldownUntil: 0 },
-            events: [],
-            fields: Array(18)
-                .fill(0)
-                .map((_, i) => {
-                    if (i < 4) return { type: "woodcutter", level: 0 };
-                    if (i < 8) return { type: "claypit", level: 0 };
-                    if (i < 12) return { type: "ironmine", level: 0 };
-                    return { type: "cropland", level: 0 };
-                }),
-            buildings: [
-                { type: "mainbuilding", level: 1, id: "mb1" },
-                { type: null, level: 0, id: "b2" },
-                { type: null, level: 0, id: "b3" },
-                { type: null, level: 0, id: "b4" },
-                { type: null, level: 0, id: "b5" },
-                { type: null, level: 0, id: "b6" },
-                { type: null, level: 0, id: "b7" },
-                { type: null, level: 0, id: "b8" },
-            ],
-            constQueue: [],
-            troops: { legionnaire: 0 },
-            trainingQueue: [],
-            missions: [],
-            reports: [],
-            // Quests system
-            quests: [
-                {
-                    id: 1,
-                    title: "First Steps",
-                    desc: "Upgrade any resource field to level 1.",
-                    type: "fieldLevel",
-                    targetLevel: 1,
-                    completed: false,
-                    claimed: false,
-                },
-                {
-                    id: 2,
-                    title: "Storage Solutions",
-                    desc: "Build a Warehouse in your village.",
-                    type: "buildBuilding",
-                    buildingType: "warehouse",
-                    completed: false,
-                    claimed: false,
-                },
-                {
-                    id: 3,
-                    title: "Raise an Army",
-                    desc: "Reach 10 Legionnaires.",
-                    type: "troopsCount",
-                    unit: "legionnaire",
-                    target: 10,
-                    completed: false,
-                    claimed: false,
-                },
-            ],
-        };
-
         const formatNum = (n) => Math.floor(n).toLocaleString();
 
-        const getCost = (type, level) => {
-            const base = BUILDING_TYPES[type].cost;
+        const getCost = (type, level, buildingTypes = {}) => {
+            const building = buildingTypes[type];
+            if (!building) return [0, 0, 0, 0];
+            const base = building.cost;
             const mult = Math.pow(1.5, level);
             return base.map((c) => Math.floor(c * mult));
         };
 
-        const getProduction = (type, level) => {
+        const getProduction = (type, level, buildingTypes = {}) => {
             if (level === 0) return 2 * SPEED_MULTIPLIER;
-            return Math.floor(BUILDING_TYPES[type].prod * level * 1.5 * SPEED_MULTIPLIER);
+            const building = buildingTypes[type];
+            if (!building) return 0;
+            return Math.floor(building.prod * level * 1.5 * SPEED_MULTIPLIER);
         };
 
-        const calculateHourlyProduction = (state, now = Date.now()) => {
+        const calculateHourlyProduction = (state, data, now = Date.now()) => {
             const totals = { wood: 0, clay: 0, iron: 0, crop: 0 };
             if (!state || !state.fields) return totals;
 
+            const buildingTypes = (data && data.buildingTypes) || {};
+
             state.fields.forEach((f) => {
-                const resType = BUILDING_TYPES[f.type].resType;
+                const resType = buildingTypes[f.type]?.resType;
+                if (!resType) return;
                 if (f.level > 0) {
-                    totals[resType] += getProduction(f.type, f.level);
+                    totals[resType] += getProduction(
+                        f.type,
+                        f.level,
+                        buildingTypes
+                    );
                 } else {
                     totals[resType] += 2 * SPEED_MULTIPLIER;
                 }
@@ -473,21 +421,216 @@
 
             const weatherIndex =
                 typeof state.weatherIndex === "number" ? state.weatherIndex : 0;
-            const weather = WEATHER_PATTERNS[weatherIndex] || WEATHER_PATTERNS[0];
+            const patterns = (data && data.weatherPatterns) || [];
+            const weather =
+                patterns[weatherIndex] || patterns[0] || {
+                    modifiers: { wood: 1, clay: 1, iron: 1, crop: 1 },
+                };
             const focusKey = state.productionFocus || "balanced";
-            const focus = FOCUS_OPTIONS[focusKey] || FOCUS_OPTIONS.balanced;
+            const focusOptions = (data && data.focusOptions) || {};
+            const focus =
+                focusOptions[focusKey] ||
+                focusOptions.balanced || {
+                    modifiers: { wood: 1, clay: 1, iron: 1, crop: 1 },
+                };
             const councilActive = state.council && state.council.activeUntil > now;
             const councilMultiplier = councilActive ? COUNCIL_BOOST.multiplier : 1;
 
             Object.keys(totals).forEach((key) => {
                 totals[key] =
                     totals[key] *
-                    (weather.modifiers[key] || 1) *
-                    (focus.modifiers[key] || 1) *
+                    (weather.modifiers?.[key] || 1) *
+                    (focus.modifiers?.[key] || 1) *
                     councilMultiplier;
             });
 
             return totals;
+        };
+
+        const runGameTick = (prev, gameData) => {
+            if (!prev) return prev;
+            const now = Date.now();
+            const next = { ...prev };
+
+            next.events = next.events || [];
+            next.council = next.council || { activeUntil: 0, cooldownUntil: 0 };
+            if (typeof next.weatherIndex !== "number") next.weatherIndex = 0;
+            if (!next.nextWeatherChange)
+                next.nextWeatherChange = now + WEATHER_CHANGE_INTERVAL;
+            next.resources =
+                next.resources || { wood: 0, clay: 0, iron: 0, crop: 0 };
+            next.maxStorage = next.maxStorage || 0;
+            next.maxGranary = next.maxGranary || 0;
+            next.fields = next.fields || [];
+            next.buildings = next.buildings || [];
+            next.constQueue = next.constQueue || [];
+            next.trainingQueue = next.trainingQueue || [];
+            next.missions = next.missions || [];
+            next.reports = next.reports || [];
+            next.quests = next.quests || [];
+            next.troops = next.troops || { legionnaire: 0 };
+
+            const weatherPatterns = (gameData && gameData.weatherPatterns) || [];
+
+            if (next.nextWeatherChange <= now && weatherPatterns.length) {
+                const newIndex = Math.floor(Math.random() * weatherPatterns.length);
+                next.weatherIndex = newIndex;
+                next.nextWeatherChange = now + WEATHER_CHANGE_INTERVAL;
+                const weatherName = weatherPatterns[newIndex]?.name;
+                if (weatherName) {
+                    next.events = pushEvent(
+                        next.events,
+                        `Weather shifted to ${weatherName}.`,
+                        "weather"
+                    );
+                }
+            }
+
+            const prod = calculateHourlyProduction(next, gameData, now);
+
+            const troopUpkeep = next.troops.legionnaire || 0;
+            const popUpkeep = next.population || 0;
+            const netCrop = prod.crop - troopUpkeep - popUpkeep;
+
+            const addRes = (key, amount) => {
+                if (typeof next.resources[key] !== "number") next.resources[key] = 0;
+                const max = key === "crop" ? next.maxGranary : next.maxStorage;
+                next.resources[key] = Math.min(
+                    max,
+                    next.resources[key] + (amount / 3600) * TICK_RATE
+                );
+            };
+
+            addRes("wood", prod.wood);
+            addRes("clay", prod.clay);
+            addRes("iron", prod.iron);
+            next.resources.crop = Math.min(
+                next.maxGranary,
+                Math.max(0, next.resources.crop + (netCrop / 3600) * TICK_RATE)
+            );
+
+            const completedConst = [];
+            next.constQueue = next.constQueue.filter((q) => {
+                if (q.finishTime <= now) {
+                    completedConst.push(q);
+                    return false;
+                }
+                return true;
+            });
+
+            completedConst.forEach((c) => {
+                if (c.isField && next.fields[c.index]) {
+                    next.fields[c.index].level = c.level;
+                } else if (next.buildings[c.index]) {
+                    next.buildings[c.index].type = c.type;
+                    next.buildings[c.index].level = c.level;
+                    if (c.type === "warehouse") next.maxStorage += c.level * 800;
+                    if (c.type === "granary") next.maxGranary += c.level * 800;
+                }
+                next.population += 2;
+            });
+
+            const completedTraining = [];
+            next.trainingQueue = next.trainingQueue.filter((q) => {
+                if (q.finishTime <= now) {
+                    completedTraining.push(q);
+                    return false;
+                }
+                return true;
+            });
+
+            completedTraining.forEach((q) => {
+                next.troops.legionnaire += q.amount;
+            });
+
+            const returningMissions = [];
+            next.missions = next.missions.filter((m) => {
+                if (m.returnTime <= now) {
+                    returningMissions.push(m);
+                    return false;
+                }
+                return true;
+            });
+
+            returningMissions.forEach((m) => {
+                if (m.type === "raid") {
+                    const casualtyRate = 0.1 + Math.random() * 0.25;
+                    const lost = Math.floor(m.troops * casualtyRate);
+                    const survivors = Math.max(0, m.troops - lost);
+
+                    const lootMultiplier = survivors;
+                    const loot = {
+                        wood: Math.floor(Math.random() * 80 * lootMultiplier),
+                        clay: Math.floor(Math.random() * 80 * lootMultiplier),
+                        iron: Math.floor(Math.random() * 80 * lootMultiplier),
+                        crop: Math.floor(Math.random() * 80 * lootMultiplier),
+                    };
+
+                    next.reports.unshift({
+                        id: Date.now() + Math.random(),
+                        title: `Raid on ${m.target}`,
+                        loot,
+                        time: new Date().toLocaleTimeString(),
+                        troopsSent: m.troops,
+                        troopsLost: lost,
+                        troopsReturned: survivors,
+                    });
+
+                    next.troops.legionnaire += survivors;
+
+                    next.resources.wood = Math.min(
+                        next.maxStorage,
+                        next.resources.wood + loot.wood
+                    );
+                    next.resources.clay = Math.min(
+                        next.maxStorage,
+                        next.resources.clay + loot.clay
+                    );
+                    next.resources.iron = Math.min(
+                        next.maxStorage,
+                        next.resources.iron + loot.iron
+                    );
+                    next.resources.crop = Math.min(
+                        next.maxGranary,
+                        next.resources.crop + loot.crop
+                    );
+
+                    next.events = pushEvent(
+                        next.events,
+                        `${survivors}/${m.troops} Legionnaires returned from ${m.target}.`,
+                        "raid"
+                    );
+                }
+            });
+
+            if (next.quests && next.quests.length) {
+                next.quests = next.quests.map((q) => {
+                    if (q.completed) return q;
+
+                    switch (q.type) {
+                        case "fieldLevel": {
+                            const anyField = next.fields.some(
+                                (f) => f.level >= q.targetLevel
+                            );
+                            return anyField ? { ...q, completed: true } : q;
+                        }
+                        case "buildBuilding": {
+                            const hasBuilding = next.buildings.some(
+                                (b) => b.type === q.buildingType && b.level > 0
+                            );
+                            return hasBuilding ? { ...q, completed: true } : q;
+                        }
+                        case "troopsCount": {
+                            const count = next.troops[q.unit] || 0;
+                            return count >= q.target ? { ...q, completed: true } : q;
+                        }
+                        default:
+                            return q;
+                    }
+                });
+            }
+
+            return next;
         };
 
         const getMainBuildingLevel = (buildings) => {
@@ -501,231 +644,97 @@
         };
 
         function App() {
-            const [state, setState] = useState(() => {
-                const saved = localStorage.getItem(SAVE_KEY);
-                if (saved) {
-                    const parsed = JSON.parse(saved);
-                    return {
-                        ...INITIAL_STATE,
-                        ...parsed,
-                        quests: parsed.quests || INITIAL_STATE.quests,
-                        events: parsed.events || INITIAL_STATE.events,
-                        productionFocus:
-                            parsed.productionFocus || INITIAL_STATE.productionFocus,
-                        council: parsed.council || INITIAL_STATE.council,
-                        weatherIndex:
-                            typeof parsed.weatherIndex === "number"
-                                ? parsed.weatherIndex
-                                : INITIAL_STATE.weatherIndex,
-                        nextWeatherChange:
-                            parsed.nextWeatherChange ||
-                            Date.now() + WEATHER_CHANGE_INTERVAL,
-                    };
-                }
-                return INITIAL_STATE;
-            });
-
+            const [gameData, setGameData] = useState(null);
+            const [state, setState] = useState(null);
+            const [loadingData, setLoadingData] = useState(true);
+            const [dataError, setDataError] = useState(null);
             const [activeTab, setActiveTab] = useState("fields");
             const [selectedSlot, setSelectedSlot] = useState(null);
             const [modalOpen, setModalOpen] = useState(false);
 
-            // --- GAME LOOP ---
             useEffect(() => {
-                const interval = setInterval(() => {
-                    const now = Date.now();
-                    setState((prev) => {
-                        const next = { ...prev };
+                let isMounted = true;
 
-                        // Weather maintenance
-                        if (!next.events) next.events = [];
-                        if (!next.council)
-                            next.council = { activeUntil: 0, cooldownUntil: 0 };
-                        if (typeof next.weatherIndex !== "number") next.weatherIndex = 0;
-                        if (!next.nextWeatherChange)
-                            next.nextWeatherChange = now + WEATHER_CHANGE_INTERVAL;
-
-                        if (next.nextWeatherChange <= now) {
-                            const newIndex = Math.floor(
-                                Math.random() * WEATHER_PATTERNS.length
-                            );
-                            next.weatherIndex = newIndex;
-                            next.nextWeatherChange = now + WEATHER_CHANGE_INTERVAL;
-                            const weatherName = WEATHER_PATTERNS[newIndex].name;
-                            next.events = pushEvent(
-                                next.events,
-                                `Weather shifted to ${weatherName}.`,
-                                "weather"
-                            );
+                fetch(DATA_PATH)
+                    .then((res) => {
+                        if (!res.ok) {
+                            throw new Error(`Failed to load ${DATA_PATH}`);
                         }
-
-                        // 1. Production (hourly values)
-                        const prod = calculateHourlyProduction(next, now);
-
-                        // 2. Crop consumption
-                        const troopUpkeep = next.troops.legionnaire;
-                        const popUpkeep = next.population;
-                        const netCrop = prod.crop - troopUpkeep - popUpkeep;
-
-                        // 3. Add resources (prod is hourly, scaled to tick)
-                        const addRes = (key, amount) => {
-                            const max = key === "crop" ? next.maxGranary : next.maxStorage;
-                            next.resources[key] = Math.min(
-                                max,
-                                next.resources[key] + (amount / 3600) * TICK_RATE
-                            );
-                        };
-
-                        addRes("wood", prod.wood);
-                        addRes("clay", prod.clay);
-                        addRes("iron", prod.iron);
-                        next.resources.crop = Math.min(
-                            next.maxGranary,
-                            Math.max(0, next.resources.crop + (netCrop / 3600) * TICK_RATE)
-                        );
-
-                        // 4. Construction queue
-                        const completedConst = [];
-                        next.constQueue = next.constQueue.filter((q) => {
-                            if (q.finishTime <= now) {
-                                completedConst.push(q);
-                                return false;
+                        return res.json();
+                    })
+                    .then((json) => {
+                        if (!isMounted) return;
+                        setGameData(json);
+                        const baseState = createInitialState(json);
+                        const saved = localStorage.getItem(SAVE_KEY);
+                        if (saved) {
+                            try {
+                                const parsed = JSON.parse(saved);
+                                setState(mergeStateWithDefaults(parsed, baseState));
+                            } catch (err) {
+                                console.error("Failed to parse save data", err);
+                                setState(baseState);
                             }
-                            return true;
-                        });
-
-                        completedConst.forEach((c) => {
-                            if (c.isField) {
-                                next.fields[c.index].level = c.level;
-                            } else {
-                                next.buildings[c.index].type = c.type;
-                                next.buildings[c.index].level = c.level;
-                                if (c.type === "warehouse") next.maxStorage += c.level * 800;
-                                if (c.type === "granary") next.maxGranary += c.level * 800;
-                            }
-                            next.population += 2;
-                        });
-
-                        // 5. Training queue
-                        const completedTraining = [];
-                        next.trainingQueue = next.trainingQueue.filter((q) => {
-                            if (q.finishTime <= now) {
-                                completedTraining.push(q);
-                                return false;
-                            }
-                            return true;
-                        });
-
-                        completedTraining.forEach((q) => {
-                            next.troops.legionnaire += q.amount;
-                        });
-
-                        // 6. Missions
-                        const returningMissions = [];
-                        next.missions = next.missions.filter((m) => {
-                            if (m.returnTime <= now) {
-                                returningMissions.push(m);
-                                return false;
-                            }
-                            return true;
-                        });
-
-                        returningMissions.forEach((m) => {
-                            if (m.type === "raid") {
-                                // Casualties: small but noticeable risk
-                                const casualtyRate = 0.1 + Math.random() * 0.25; // 10–35%
-                                const lost = Math.floor(m.troops * casualtyRate);
-                                const survivors = Math.max(0, m.troops - lost);
-
-                                const lootMultiplier = survivors; // survivors determine how much you can carry
-                                const loot = {
-                                    wood: Math.floor(Math.random() * 80 * lootMultiplier),
-                                    clay: Math.floor(Math.random() * 80 * lootMultiplier),
-                                    iron: Math.floor(Math.random() * 80 * lootMultiplier),
-                                    crop: Math.floor(Math.random() * 80 * lootMultiplier),
-                                };
-
-                                next.reports.unshift({
-                                    id: Date.now() + Math.random(),
-                                    title: `Raid on ${m.target}`,
-                                    loot,
-                                    time: new Date().toLocaleTimeString(),
-                                    troopsSent: m.troops,
-                                    troopsLost: lost,
-                                    troopsReturned: survivors,
-                                });
-
-                                next.troops.legionnaire += survivors;
-
-                                next.resources.wood = Math.min(
-                                    next.maxStorage,
-                                    next.resources.wood + loot.wood
-                                );
-                                next.resources.clay = Math.min(
-                                    next.maxStorage,
-                                    next.resources.clay + loot.clay
-                                );
-                                next.resources.iron = Math.min(
-                                    next.maxStorage,
-                                    next.resources.iron + loot.iron
-                                );
-                                next.resources.crop = Math.min(
-                                    next.maxGranary,
-                                    next.resources.crop + loot.crop
-                                );
-
-                                next.events = pushEvent(
-                                    next.events,
-                                    `${survivors}/${m.troops} Legionnaires returned from ${m.target}.`,
-                                    "raid"
-                                );
-                            }
-                        });
-
-                        // 7. Quests auto-completion checks
-                        if (next.quests && next.quests.length) {
-                            next.quests = next.quests.map((q) => {
-                                if (q.completed) return q;
-
-                                switch (q.type) {
-                                    case "fieldLevel": {
-                                        const anyField = next.fields.some(
-                                            (f) => f.level >= q.targetLevel
-                                        );
-                                        return anyField ? { ...q, completed: true } : q;
-                                    }
-                                    case "buildBuilding": {
-                                        const hasBuilding = next.buildings.some(
-                                            (b) => b.type === q.buildingType && b.level > 0
-                                        );
-                                        return hasBuilding ? { ...q, completed: true } : q;
-                                    }
-                                    case "troopsCount": {
-                                        const count = next.troops[q.unit] || 0;
-                                        return count >= q.target ? { ...q, completed: true } : q;
-                                    }
-                                    default:
-                                        return q;
-                                }
-                            });
+                        } else {
+                            setState(baseState);
                         }
-
-                        return next;
+                    })
+                    .catch((err) => {
+                        if (!isMounted) return;
+                        console.error(err);
+                        setDataError(err.message);
+                    })
+                    .finally(() => {
+                        if (isMounted) setLoadingData(false);
                     });
-                }, TICK_RATE);
 
-                return () => clearInterval(interval);
+                return () => {
+                    isMounted = false;
+                };
             }, []);
 
-            // Save
             useEffect(() => {
+                if (!gameData) return;
+                const interval = setInterval(() => {
+                    setState((prev) => runGameTick(prev, gameData));
+                }, TICK_RATE);
+                return () => clearInterval(interval);
+            }, [gameData]);
+
+            useEffect(() => {
+                if (!state) return;
                 localStorage.setItem(SAVE_KEY, JSON.stringify(state));
             }, [state]);
+
+            if (loadingData) {
+                return (
+                    <div className="w-full h-full flex items-center justify-center bg-slate-950 text-slate-200">
+                        Loading game data...
+                    </div>
+                );
+            }
+
+            if (dataError) {
+                return (
+                    <div className="w-full h-full flex items-center justify-center bg-slate-950 text-slate-200 px-4 text-center">
+                        Failed to load game data: {dataError}
+                    </div>
+                );
+            }
+
+            if (!state || !gameData) {
+                return null;
+            }
+
+            const focusOptions = gameData.focusOptions || {};
+            const weatherPatterns = gameData.weatherPatterns || [];
+            const buildingTypes = gameData.buildingTypes || {};
 
             // --- ACTIONS ---
             const upgradeBuilding = (type) => {
                 if (!selectedSlot) return;
                 const { index, isField, level } = selectedSlot;
-                const costs = getCost(type, level);
+                const costs = getCost(type, level, buildingTypes);
 
                 if (
                     state.resources.wood < costs[0] ||
@@ -874,7 +883,11 @@
             const changeProductionFocus = (focusKey) => {
                 setState((prev) => {
                     if (prev.productionFocus === focusKey) return prev;
-                    const choice = FOCUS_OPTIONS[focusKey] || FOCUS_OPTIONS.balanced;
+                    const choice =
+                        focusOptions[focusKey] ||
+                        focusOptions.balanced || {
+                            label: "Balanced",
+                        };
                     return {
                         ...prev,
                         productionFocus: focusKey,
@@ -981,7 +994,13 @@
 
             const WeatherPanel = () => {
                 const weather =
-                    WEATHER_PATTERNS[state.weatherIndex] || WEATHER_PATTERNS[0];
+                    weatherPatterns[state.weatherIndex] ||
+                    weatherPatterns[0] || {
+                        icon: "?",
+                        name: "Unknown",
+                        description: "Awaiting forecast...",
+                        modifiers: { wood: 1, clay: 1, iron: 1, crop: 1 },
+                    };
                 const remaining = Math.max(
                     0,
                     (state.nextWeatherChange || 0) - Date.now()
@@ -1026,7 +1045,7 @@
             };
 
             const ProductionInsights = () => {
-                const prod = calculateHourlyProduction(state);
+                const prod = calculateHourlyProduction(state, gameData);
                 const troopUpkeep = state.troops.legionnaire;
                 const popUpkeep = state.population;
                 const netCrop = prod.crop - troopUpkeep - popUpkeep;
@@ -1109,7 +1128,7 @@
                             Strategic focus
                         </div>
                         <div className="grid grid-cols-2 gap-2">
-                            {Object.entries(FOCUS_OPTIONS).map(([key, opt]) => {
+                            {Object.entries(focusOptions).map(([key, opt]) => {
                                 const isActive = state.productionFocus === key;
                                 return (
                                     <button
@@ -1295,7 +1314,7 @@
                                     {b.type ? (
                                         <>
                                             <div className="font-semibold text-xs text-center text-slate-50 mb-1">
-                                                {BUILDING_TYPES[b.type].name}
+                                                {buildingTypes[b.type]?.name || "Structure"}
                                             </div>
                                             <div className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-slate-200">
                                                 Lvl {b.level}
@@ -1554,8 +1573,9 @@
                                             ).length;
                                             if (bKey === "mainbuilding" && count > 0) return null;
 
-                                            const b = BUILDING_TYPES[bKey];
-                                            const costs = b.cost;
+                                            const b = buildingTypes[bKey];
+                                            if (!b) return null;
+                                            const costs = b.cost || [0, 0, 0, 0];
 
                                             return (
                                                 <div
@@ -1587,7 +1607,6 @@
                                                     <button
                                                         type="button"
                                                         onClick={() => {
-                                                            const costs = b.cost;
                                                             if (
                                                                 state.resources.wood < costs[0] ||
                                                                 state.resources.clay < costs[1] ||
@@ -1658,8 +1677,8 @@
                     );
                 }
 
-                const nextCost = getCost(type, level);
-                const building = BUILDING_TYPES[type];
+                const nextCost = getCost(type, level, buildingTypes);
+                const building = buildingTypes[type] || { name: type, desc: "" };
 
                 return (
                     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60">
@@ -1676,10 +1695,12 @@
                                         {isField
                                             ? `Production: ${getProduction(
                                                   type,
-                                                  level
+                                                  level,
+                                                  buildingTypes
                                               )} → ${getProduction(
                                                   type,
-                                                  level + 1
+                                                  level + 1,
+                                                  buildingTypes
                                               )} per hour`
                                             : building.desc}
                                     </p>
