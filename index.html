@@ -240,6 +240,73 @@
                     <polyline points="12 6 12 12 16 14" />
                 </svg>
             ),
+            Shield: () => (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                >
+                    <path d="M12 2 4 5v6c0 5 3.5 9.2 8 11 4.5-1.8 8-6 8-11V5Z" />
+                    <path d="M12 2v20" />
+                </svg>
+            ),
+            Eye: () => (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                >
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" />
+                    <circle cx="12" cy="12" r="3" />
+                </svg>
+            ),
+            Coin: () => (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                >
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7v10" />
+                    <path d="M9 9h6" />
+                    <path d="M9 15h6" />
+                </svg>
+            ),
+            Book: () => (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                >
+                    <path d="M4 19.5V5a2 2 0 0 1 2-2h5" />
+                    <path d="M20 19.5V5a2 2 0 0 0-2-2h-5" />
+                    <path d="M12 22V3" />
+                </svg>
+            ),
             X: () => (
                 <svg
                     xmlns="http://www.w3.org/2000/svg"
@@ -442,7 +509,7 @@
                 id: `field-${index}`,
             }));
 
-            return {
+            const baseState = {
                 resources:
                     template.resources ||
                     { wood: 750, clay: 750, iron: 750, crop: 750 },
@@ -476,11 +543,14 @@
                 quests: template.quests || [],
                 aiVillages: buildAiVillagesFromConfig(data, template.aiVillages),
             };
+
+            baseState.stats = template.stats || calculateVillageStats(baseState);
+            return baseState;
         };
 
         const mergeStateWithDefaults = (saved, base) => {
             if (!saved) return base;
-            return {
+            const merged = {
                 ...base,
                 ...saved,
                 quests: saved.quests || base.quests,
@@ -505,6 +575,8 @@
                     base.aiVillages || []
                 ),
             };
+            merged.stats = saved.stats || calculateVillageStats(merged);
+            return merged;
         };
 
         const pushEvent = (events = [], message, type = "general") => {
@@ -684,6 +756,20 @@
                 }
                 next.population += 2;
             });
+
+            next.stats = calculateVillageStats(next);
+            const prosperityBonus = Math.floor(
+                Math.max(0, next.stats?.prosperity || 0) * 0.4
+            );
+            if (prosperityBonus > 0) {
+                addRes("wood", prosperityBonus * 0.35);
+                addRes("clay", prosperityBonus * 0.3);
+                addRes("iron", prosperityBonus * 0.2);
+                next.resources.crop = Math.min(
+                    next.maxGranary,
+                    next.resources.crop + ((prosperityBonus * 0.15) / 3600) * TICK_RATE
+                );
+            }
 
             const completedTraining = [];
             next.trainingQueue = next.trainingQueue.filter((q) => {
@@ -919,16 +1005,40 @@
                         randomBetween(forceRange[0], forceRange[1])
                     );
                     const defenders = next.troops.legionnaire || 0;
+                    const stats = next.stats || calculateVillageStats(next);
+                    const defenseBoost = Math.floor((stats.defense || 0) / 6);
+                    const scoutingReduction = Math.min(
+                        0.5,
+                        (stats.scouting || 0) / 200
+                    );
+                    const effectiveAttackForce = Math.max(
+                        3,
+                        Math.floor(attackTroops * (1 - scoutingReduction))
+                    );
+                    const defenseStrength = defenders + defenseBoost;
 
-                    if (defenders >= attackTroops * 0.75) {
+                    if (defenseStrength >= effectiveAttackForce) {
                         const losses = Math.max(
                             1,
-                            Math.floor(attackTroops * (0.4 + Math.random() * 0.3))
+                            Math.floor(
+                                effectiveAttackForce * (0.35 + Math.random() * 0.25)
+                            )
                         );
-                        next.troops.legionnaire = Math.max(0, defenders - losses);
+                        const mitigatedLosses = Math.max(
+                            0,
+                            losses - Math.floor(defenseBoost / 4)
+                        );
+                        next.troops.legionnaire = Math.max(
+                            0,
+                            defenders - mitigatedLosses
+                        );
+                        const defenseNote =
+                            defenseBoost > 0
+                                ? " Fortifications absorbed part of the blow."
+                                : "";
                         next.events = pushEvent(
                             next.events,
-                            `${ai.name} attack repelled. Lost ${losses} troops.`,
+                            `${ai.name} attack repelled.${defenseNote}`,
                             "defense"
                         );
                         next.reports.unshift({
@@ -937,24 +1047,46 @@
                             loot: cloneResources(),
                             time: new Date().toLocaleTimeString(),
                             troopsSent: attackTroops,
-                            troopsLost: losses,
+                            troopsLost: mitigatedLosses,
                             troopsReturned: next.troops.legionnaire,
                             defense: true,
                         });
                     } else {
                         const stolen = cloneResources();
+                        const baseStealRatio = Math.min(
+                            0.5,
+                            0.15 + effectiveAttackForce / 120
+                        );
+                        const scoutingShield = Math.min(
+                            0.3,
+                            (stats.scouting || 0) / 250
+                        );
                         RESOURCE_KEYS.forEach((key) => {
                             const available = next.resources[key] || 0;
-                            const stealRatio = Math.min(0.5, 0.15 + attackTroops / 120);
-                            const take = Math.floor(available * stealRatio);
+                            const takeRatio = Math.max(
+                                0.05,
+                                baseStealRatio - scoutingShield
+                            );
+                            const take = Math.floor(available * takeRatio);
                             stolen[key] = take;
                             next.resources[key] = Math.max(0, available - take);
                         });
-                        const troopLoss = defenders;
-                        next.troops.legionnaire = 0;
+                        const troopLoss = Math.min(
+                            defenders,
+                            Math.max(
+                                0,
+                                Math.floor(effectiveAttackForce * 0.7) -
+                                    Math.floor(defenseBoost / 5)
+                            )
+                        );
+                        next.troops.legionnaire = Math.max(0, defenders - troopLoss);
+                        const breachNote =
+                            defenseBoost > 0
+                                ? " Fortifications slowed them, but not enough."
+                                : "";
                         next.events = pushEvent(
                             next.events,
-                            `${ai.name} pillaged the village!`,
+                            `${ai.name} pillaged the village!${breachNote}`,
                             "defense"
                         );
                         next.reports.unshift({
@@ -964,7 +1096,7 @@
                             time: new Date().toLocaleTimeString(),
                             troopsSent: attackTroops,
                             troopsLost: troopLoss,
-                            troopsReturned: 0,
+                            troopsReturned: next.troops.legionnaire,
                             defense: true,
                         });
                     }
@@ -1008,14 +1140,32 @@
             return next;
         };
 
-        const getMainBuildingLevel = (buildings) => {
-            const mb = buildings.find((b) => b.type === "mainbuilding");
-            return mb ? mb.level : 0;
+        const getBuildingLevelByType = (buildings = [], type) => {
+            if (!Array.isArray(buildings)) return 0;
+            const structure = buildings.find((b) => b.type === type);
+            return structure ? structure.level || 0 : 0;
         };
 
-        const getBarracksLevel = (buildings) => {
-            const b = buildings.find((b) => b.type === "barracks");
-            return b ? b.level : 0;
+        const getMainBuildingLevel = (buildings) =>
+            getBuildingLevelByType(buildings, "mainbuilding");
+
+        const getBarracksLevel = (buildings) =>
+            getBuildingLevelByType(buildings, "barracks");
+
+        const calculateVillageStats = (state = {}) => {
+            const buildings = state.buildings || [];
+            const palisadeLevel = getBuildingLevelByType(buildings, "palisade");
+            const watchtowerLevel = getBuildingLevelByType(buildings, "watchtower");
+            const marketLevel = getBuildingLevelByType(buildings, "market");
+            const academyLevel = getBuildingLevelByType(buildings, "academy");
+            const population = state.population || 0;
+
+            const defense = palisadeLevel * 12 + Math.floor(population / 4);
+            const scouting = watchtowerLevel * 10 + academyLevel * 3;
+            const prosperity = marketLevel * 18 + Math.floor(population / 5);
+            const knowledge = academyLevel * 15;
+
+            return { defense, scouting, prosperity, knowledge };
         };
 
         function App() {
@@ -1166,9 +1316,16 @@
 
                 setState((prev) => {
                     const barracksLevel = getBarracksLevel(prev.buildings);
+                    const academyLevel = getBuildingLevelByType(
+                        prev.buildings,
+                        "academy"
+                    );
                     const baseTimePerUnit = 2000; // ms
                     const timeFactor = 1 - Math.min(0.5, barracksLevel * 0.07); // up to 50% faster
-                    const totalTime = (amount * baseTimePerUnit * timeFactor) / SPEED_MULTIPLIER;
+                    const knowledgeBoost = Math.min(0.3, academyLevel * 0.05);
+                    const totalTime =
+                        (amount * baseTimePerUnit * timeFactor * (1 - knowledgeBoost)) /
+                        SPEED_MULTIPLIER;
 
                     return {
                         ...prev,
@@ -1733,6 +1890,102 @@
                 </div>
             );
 
+            const VillageStatsPanel = () => {
+                const stats = state.stats || calculateVillageStats(state);
+                const palisadeLevel = getBuildingLevelByType(
+                    state.buildings,
+                    "palisade"
+                );
+                const watchtowerLevel = getBuildingLevelByType(
+                    state.buildings,
+                    "watchtower"
+                );
+                const marketLevel = getBuildingLevelByType(state.buildings, "market");
+                const academyLevel = getBuildingLevelByType(state.buildings, "academy");
+                const defenseTroops = Math.floor((stats.defense || 0) / 6);
+                const scoutingMitigation = Math.round(
+                    Math.min(0.5, (stats.scouting || 0) / 200) * 100
+                );
+                const tradePerHour = Math.floor(
+                    Math.max(0, stats.prosperity || 0) * 0.4
+                );
+                const knowledgeBoost = Math.min(30, academyLevel * 5);
+
+                const cards = [
+                    {
+                        key: "defense",
+                        label: "Defense",
+                        icon: Icons.Shield,
+                        value: stats.defense,
+                        detail:
+                            palisadeLevel > 0
+                                ? `Palisade lvl ${palisadeLevel} adds ${defenseTroops} extra defenders.`
+                                : "Build a Palisade to fortify the village.",
+                    },
+                    {
+                        key: "scouting",
+                        label: "Scouting",
+                        icon: Icons.Eye,
+                        value: stats.scouting,
+                        detail:
+                            watchtowerLevel > 0
+                                ? `Watchtower lvl ${watchtowerLevel} softens raids by ~${scoutingMitigation}%.`
+                                : "Erect a Watchtower to spot threats earlier.",
+                    },
+                    {
+                        key: "prosperity",
+                        label: "Prosperity",
+                        icon: Icons.Coin,
+                        value: stats.prosperity,
+                        detail:
+                            marketLevel > 0
+                                ? `Market brings in ~${tradePerHour}/h bonus resources.`
+                                : "Markets unlock steady trade trickles.",
+                    },
+                    {
+                        key: "knowledge",
+                        label: "Knowledge",
+                        icon: Icons.Book,
+                        value: stats.knowledge,
+                        detail:
+                            academyLevel > 0
+                                ? `Academy cuts troop training by ${knowledgeBoost}%.`
+                                : "An academy accelerates military research.",
+                    },
+                ];
+
+                return (
+                    <div className="bg-slate-900/85 border border-slate-800 rounded-xl p-3 text-slate-100 mb-4">
+                        <div className="text-[11px] uppercase text-slate-400 font-semibold mb-2">
+                            Civic metrics
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            {cards.map((card) => {
+                                const IconComp = card.icon;
+                                return (
+                                    <div
+                                        key={card.key}
+                                        className="border border-slate-800 rounded-lg px-2.5 py-2 bg-slate-950/70 flex flex-col gap-1"
+                                    >
+                                        <div className="flex items-center justify-between text-xs">
+                                            <span className="flex items-center gap-1 text-slate-200">
+                                                <IconComp /> {card.label}
+                                            </span>
+                                            <span className="font-mono text-emerald-300">
+                                                {card.value}
+                                            </span>
+                                        </div>
+                                        <div className="text-[10px] text-slate-400 leading-tight">
+                                            {card.detail}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                );
+            };
+
             const VillageView = () => (
                 <div className="px-4 py-4 pb-24">
                     <div className="text-center mb-3">
@@ -1741,6 +1994,7 @@
                             Construct and upgrade infrastructure.
                         </p>
                     </div>
+                    <VillageStatsPanel />
                     <div className="grid grid-cols-2 gap-3">
                         {state.buildings.map((b, i) => {
                             const isBuilding = state.constQueue.find(
@@ -1882,6 +2136,10 @@
                 const incomingThreats = [...aiTargets]
                     .filter((ai) => ai.nextAttack)
                     .sort((a, b) => (a.nextAttack || 0) - (b.nextAttack || 0));
+                const stats = state.stats || calculateVillageStats(state);
+                const scoutingMitigation = Math.round(
+                    Math.min(0.5, (stats.scouting || 0) / 200) * 100
+                );
 
                 return (
                     <div className="px-4 py-4 pb-24">
@@ -1916,6 +2174,27 @@
                                 <div className="text-[11px] text-slate-400">
                                     Defend the village or send raiding parties.
                                 </div>
+                            </div>
+                            <div className="bg-slate-950/70 border border-indigo-800 rounded-xl px-3 py-3 text-left col-span-2">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <div className="text-[10px] uppercase text-indigo-300 tracking-wide">
+                                            Fortifications
+                                        </div>
+                                        <div className="flex items-center gap-1 text-sm font-semibold text-indigo-100">
+                                            <Icons.Shield /> Defense {stats.defense || 0}
+                                        </div>
+                                    </div>
+                                    <div className="text-right text-[10px] text-indigo-200">
+                                        Scouting reduces raids by ~{scoutingMitigation}%
+                                        <div className="flex items-center gap-1 justify-end text-xs text-slate-200">
+                                            <Icons.Eye /> {stats.scouting || 0}
+                                        </div>
+                                    </div>
+                                </div>
+                                <p className="text-[11px] text-slate-300 mt-1">
+                                    Prosperity trickle: ~{Math.floor(Math.max(0, stats.prosperity || 0) * 0.4)} resources/h
+                                </p>
                             </div>
                         </div>
 
@@ -2150,6 +2429,11 @@
 
                 // Empty village slot: choose building to construct
                 if (!type && !isField) {
+                    const buildableEntries = Object.entries(buildingTypes)
+                        .filter(([, info]) => info && info.type !== "resource")
+                        .sort(
+                            (a, b) => (a[1].order ?? 99) - (b[1].order ?? 99)
+                        );
                     return (
                         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60">
                             <div className="bg-slate-950 w-full max-w-md px-4 py-4 rounded-t-2xl sm:rounded-2xl shadow-xl border border-slate-800">
@@ -2166,111 +2450,121 @@
                                     </button>
                                 </div>
                                 <div className="space-y-3">
-                                    {["mainbuilding", "warehouse", "granary", "barracks"].map(
-                                        (bKey) => {
-                                            const count = state.buildings.filter(
-                                                (b) => b.type === bKey
-                                            ).length;
-                                            if (bKey === "mainbuilding" && count > 0) return null;
+                                    {buildableEntries.map(([bKey, b]) => {
+                                        if (!b) return null;
+                                        const count = state.buildings.filter(
+                                            (building) => building.type === bKey && building.level > 0
+                                        ).length;
+                                        const costs = b.cost || [0, 0, 0, 0];
+                                        const isUnique = Boolean(b.unique);
+                                        const uniqueBuilt = isUnique && count > 0;
+                                        const canAfford =
+                                            state.resources.wood >= costs[0] &&
+                                            state.resources.clay >= costs[1] &&
+                                            state.resources.iron >= costs[2] &&
+                                            state.resources.crop >= costs[3];
 
-                                            const b = buildingTypes[bKey];
-                                            if (!b) return null;
-                                            const costs = b.cost || [0, 0, 0, 0];
-
-                                            return (
-                                                <div
-                                                    key={bKey}
-                                                    className="border border-slate-700 rounded-lg px-3 py-2.5 flex justify-between items-center bg-slate-900/80"
-                                                >
-                                                    <div className="mr-2">
-                                                        <div className="font-semibold text-xs text-slate-50 mb-0.5">
+                                        return (
+                                            <div
+                                                key={bKey}
+                                                className="border border-slate-700 rounded-lg px-3 py-2.5 flex justify-between items-center bg-slate-900/80"
+                                            >
+                                                <div className="mr-2">
+                                                    <div className="flex items-center gap-2 mb-0.5">
+                                                        <div className="font-semibold text-xs text-slate-50">
                                                             {b.name}
                                                         </div>
-                                                        <div className="text-[11px] text-slate-300 mb-1.5">
-                                                            {b.desc}
-                                                        </div>
-                                                        <div className="flex gap-2 text-[10px] font-mono text-slate-200">
-                                                            <span className="flex items-center gap-1">
-                                                                <Icons.Wood /> {costs[0]}
+                                                        {isUnique && (
+                                                            <span className="text-[10px] text-emerald-300 uppercase">
+                                                                Unique
                                                             </span>
-                                                            <span className="flex items-center gap-1">
-                                                                <Icons.Clay /> {costs[1]}
-                                                            </span>
-                                                            <span className="flex items-center gap-1">
-                                                                <Icons.Iron /> {costs[2]}
-                                                            </span>
-                                                            <span className="flex items-center gap-1">
-                                                                <Icons.Crop /> {costs[3]}
-                                                            </span>
-                                                        </div>
+                                                        )}
                                                     </div>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            if (
-                                                                state.resources.wood < costs[0] ||
-                                                                state.resources.clay < costs[1] ||
-                                                                state.resources.iron < costs[2] ||
-                                                                state.resources.crop < costs[3]
-                                                            ) {
-                                                                alert("Not enough resources!");
-                                                                return;
-                                                            }
-                                                            setState((prev) => {
-                                                                const mainLevel = getMainBuildingLevel(
-                                                                    prev.buildings
-                                                                );
-                                                                const baseTime = 10000;
-                                                                const timeFactor =
-                                                                    1 -
-                                                                    Math.min(
-                                                                        0.4,
-                                                                        mainLevel * 0.05
-                                                                    );
-                                                                const buildTime =
-                                                                    (baseTime * timeFactor) /
-                                                                    SPEED_MULTIPLIER;
-
-                                                                return {
-                                                                    ...prev,
-                                                                    resources: {
-                                                                        wood:
-                                                                            prev.resources.wood -
-                                                                            costs[0],
-                                                                        clay:
-                                                                            prev.resources.clay -
-                                                                            costs[1],
-                                                                        iron:
-                                                                            prev.resources.iron -
-                                                                            costs[2],
-                                                                        crop:
-                                                                            prev.resources.crop -
-                                                                            costs[3],
-                                                                    },
-                                                                    constQueue: [
-                                                                        ...prev.constQueue,
-                                                                        {
-                                                                            type: bKey,
-                                                                            index,
-                                                                            level: 1,
-                                                                            finishTime:
-                                                                                Date.now() +
-                                                                                buildTime,
-                                                                            isField: false,
-                                                                        },
-                                                                    ],
-                                                                };
-                                                            });
-                                                            setModalOpen(false);
-                                                        }}
-                                                        className="bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-semibold px-3 py-1.5 rounded-md active:scale-95 transition-transform"
-                                                    >
-                                                        Build
-                                                    </button>
+                                                    <div className="text-[11px] text-slate-300 mb-1">
+                                                        {b.desc}
+                                                    </div>
+                                                    {b.effect && (
+                                                        <div className="text-[10px] text-emerald-300 mb-1">
+                                                            {b.effect}
+                                                        </div>
+                                                    )}
+                                                    <div className="flex gap-2 text-[10px] font-mono text-slate-200 flex-wrap">
+                                                        <span className="flex items-center gap-1">
+                                                            <Icons.Wood /> {costs[0]}
+                                                        </span>
+                                                        <span className="flex items-center gap-1">
+                                                            <Icons.Clay /> {costs[1]}
+                                                        </span>
+                                                        <span className="flex items-center gap-1">
+                                                            <Icons.Iron /> {costs[2]}
+                                                        </span>
+                                                        <span className="flex items-center gap-1">
+                                                            <Icons.Crop /> {costs[3]}
+                                                        </span>
+                                                    </div>
                                                 </div>
-                                            );
-                                        }
-                                    )}
+                                                <button
+                                                    type="button"
+                                                    disabled={!canAfford || uniqueBuilt}
+                                                    onClick={() => {
+                                                        if (!canAfford || uniqueBuilt) return;
+                                                        setState((prev) => {
+                                                            if (
+                                                                prev.resources.wood < costs[0] ||
+                                                                prev.resources.clay < costs[1] ||
+                                                                prev.resources.iron < costs[2] ||
+                                                                prev.resources.crop < costs[3]
+                                                            ) {
+                                                                return prev;
+                                                            }
+                                                            const mainLevel = getMainBuildingLevel(
+                                                                prev.buildings
+                                                            );
+                                                            const baseTime = 10000;
+                                                            const timeFactor =
+                                                                1 - Math.min(0.4, mainLevel * 0.05);
+                                                            const buildTime =
+                                                                (baseTime * timeFactor) /
+                                                                SPEED_MULTIPLIER;
+
+                                                            return {
+                                                                ...prev,
+                                                                resources: {
+                                                                    wood:
+                                                                        prev.resources.wood - costs[0],
+                                                                    clay:
+                                                                        prev.resources.clay - costs[1],
+                                                                    iron:
+                                                                        prev.resources.iron - costs[2],
+                                                                    crop:
+                                                                        prev.resources.crop - costs[3],
+                                                                },
+                                                                constQueue: [
+                                                                    ...prev.constQueue,
+                                                                    {
+                                                                        type: bKey,
+                                                                        index,
+                                                                        level: 1,
+                                                                        finishTime:
+                                                                            Date.now() + buildTime,
+                                                                        isField: false,
+                                                                    },
+                                                                ],
+                                                            };
+                                                        });
+                                                        setModalOpen(false);
+                                                    }}
+                                                    className={`text-[11px] font-semibold px-3 py-1.5 rounded-md active:scale-95 transition-transform ${
+                                                        !canAfford || uniqueBuilt
+                                                            ? "bg-slate-700 text-slate-400 cursor-not-allowed opacity-60"
+                                                            : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                                                    }`}
+                                                >
+                                                    {uniqueBuilt ? "Built" : "Build"}
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             </div>
                         </div>

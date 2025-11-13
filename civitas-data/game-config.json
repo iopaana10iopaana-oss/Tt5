@@ -80,25 +80,70 @@
       "name": "Main Building",
       "cost": [75, 40, 60, 20],
       "type": "infrastructure",
-      "desc": "Reduces construction time."
+      "desc": "Reduces construction time.",
+      "effect": "Each level speeds up all construction in the village.",
+      "order": 1,
+      "unique": true
     },
     "warehouse": {
       "name": "Warehouse",
       "cost": [130, 160, 90, 40],
       "type": "infrastructure",
-      "desc": "Increases resource capacity."
+      "desc": "Increases resource capacity.",
+      "effect": "Raises wood, clay and iron storage limits.",
+      "order": 2
     },
     "granary": {
       "name": "Granary",
       "cost": [80, 100, 70, 20],
       "type": "infrastructure",
-      "desc": "Increases crop capacity."
+      "desc": "Increases crop capacity.",
+      "effect": "Expands food reserves for troops and citizens.",
+      "order": 3
     },
     "barracks": {
       "name": "Barracks",
       "cost": [210, 140, 130, 120],
       "type": "infrastructure",
-      "desc": "Trains infantry."
+      "desc": "Trains infantry.",
+      "effect": "Unlocks Legionnaire training and speeds queues as it levels.",
+      "order": 4
+    },
+    "market": {
+      "name": "Market",
+      "cost": [180, 150, 140, 100],
+      "type": "economy",
+      "desc": "Establishes trade routes.",
+      "effect": "Generates prosperity that trickles extra resources each hour.",
+      "order": 5,
+      "unique": true
+    },
+    "palisade": {
+      "name": "Palisade",
+      "cost": [220, 180, 160, 90],
+      "type": "defense",
+      "desc": "Timber walls encircle the village.",
+      "effect": "Adds a defense rating that helps repel incoming raids.",
+      "order": 6,
+      "unique": true
+    },
+    "watchtower": {
+      "name": "Watchtower",
+      "cost": [200, 150, 200, 100],
+      "type": "defense",
+      "desc": "Scouts keep eyes on the horizon.",
+      "effect": "Improves scouting to weaken enemies and protect resources.",
+      "order": 7,
+      "unique": true
+    },
+    "academy": {
+      "name": "Academy",
+      "cost": [260, 220, 240, 180],
+      "type": "infrastructure",
+      "desc": "Scholars and tacticians gather here.",
+      "effect": "Produces knowledge that accelerates training and strategy.",
+      "order": 8,
+      "unique": true
     }
   },
   "aiOpponents": [
@@ -221,6 +266,24 @@
         "type": "troopsCount",
         "unit": "legionnaire",
         "target": 10,
+        "completed": false,
+        "claimed": false
+      },
+      {
+        "id": 4,
+        "title": "Raise the Palisade",
+        "desc": "Construct a Palisade to deter raiders.",
+        "type": "buildBuilding",
+        "buildingType": "palisade",
+        "completed": false,
+        "claimed": false
+      },
+      {
+        "id": 5,
+        "title": "Eyes on the Horizon",
+        "desc": "Build a Watchtower to improve scouting.",
+        "type": "buildBuilding",
+        "buildingType": "watchtower",
         "completed": false,
         "claimed": false
       }
