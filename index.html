@@ -263,6 +263,91 @@
         const SAVE_KEY = "civitas_save_v1";
         const SPEED_MULTIPLIER = 5; // Speed server!
 
+        const WEATHER_CHANGE_INTERVAL = 3 * 60 * 1000; // 3 minutes
+        const WEATHER_PATTERNS = [
+            {
+                name: "Clear Skies",
+                icon: "☀️",
+                description: "Stable weather keeps everything balanced.",
+                modifiers: { wood: 1, clay: 1, iron: 1, crop: 1 },
+            },
+            {
+                name: "Spring Rains",
+                icon: "🌧️",
+                description: "Fields thrive, but lumber camps get soggy.",
+                modifiers: { wood: 0.9, clay: 1, iron: 0.95, crop: 1.25 },
+            },
+            {
+                name: "Sandstorm",
+                icon: "🌪️",
+                description: "Visibility is low. Mining slows but clay hardens quickly.",
+                modifiers: { wood: 1, clay: 1.2, iron: 0.8, crop: 0.85 },
+            },
+            {
+                name: "Harvest Moon",
+                icon: "🌕",
+                description: "Crops flourish while artisans focus on ironwork.",
+                modifiers: { wood: 0.95, clay: 0.95, iron: 1.15, crop: 1.2 },
+            },
+        ];
+
+        const FOCUS_OPTIONS = {
+            balanced: {
+                label: "Balanced",
+                description: "Even output across the empire.",
+                modifiers: { wood: 1, clay: 1, iron: 1, crop: 1 },
+            },
+            lumber: {
+                label: "Lumber Rush",
+                description: "+20% wood, -10% other resources.",
+                modifiers: { wood: 1.2, clay: 0.9, iron: 0.9, crop: 0.9 },
+            },
+            masonry: {
+                label: "Clay Rampart",
+                description: "+20% clay, -10% others.",
+                modifiers: { wood: 0.9, clay: 1.2, iron: 0.9, crop: 0.9 },
+            },
+            harvest: {
+                label: "Harvest Focus",
+                description: "+20% crop, -10% other resources.",
+                modifiers: { wood: 0.9, clay: 0.9, iron: 0.9, crop: 1.2 },
+            },
+        };
+
+        const COUNCIL_BOOST = {
+            duration: 2 * 60 * 1000,
+            cooldown: 10 * 60 * 1000,
+            multiplier: 1.25,
+        };
+
+        const MAX_EVENTS = 8;
+
+        const pushEvent = (events = [], message, type = "general") => {
+            const entry = {
+                id: Date.now() + Math.random(),
+                message,
+                type,
+                time: new Date().toLocaleTimeString(),
+            };
+            return [entry, ...events].slice(0, MAX_EVENTS);
+        };
+
+        const formatCountdown = (ms) => {
+            if (!ms || ms <= 0) return "Soon";
+            const totalSeconds = Math.floor(ms / 1000);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            if (minutes > 0) return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+            return `${seconds}s`;
+        };
+
+        const formatTimeToCap = (hours) => {
+            if (!isFinite(hours) || hours <= 0) return "Stable";
+            if (hours < 1 / 60) return "<1m";
+            if (hours < 1) return `${Math.ceil(hours * 60)}m`;
+            return `${hours.toFixed(1)}h`;
+        };
+
         const BUILDING_TYPES = {
             woodcutter: { name: "Woodcutter", cost: [40, 100, 50, 60], prod: 10, type: "resource", resType: "wood" },
             claypit: { name: "Clay Pit", cost: [80, 40, 80, 50], prod: 10, type: "resource", resType: "clay" },
@@ -299,6 +384,11 @@
             maxStorage: 800,
             maxGranary: 800,
             population: 1,
+            weatherIndex: 0,
+            nextWeatherChange: Date.now() + WEATHER_CHANGE_INTERVAL,
+            productionFocus: "balanced",
+            council: { activeUntil: 0, cooldownUntil: 0 },
+            events: [],
             fields: Array(18)
                 .fill(0)
                 .map((_, i) => {
@@ -368,6 +458,38 @@
             return Math.floor(BUILDING_TYPES[type].prod * level * 1.5 * SPEED_MULTIPLIER);
         };
 
+        const calculateHourlyProduction = (state, now = Date.now()) => {
+            const totals = { wood: 0, clay: 0, iron: 0, crop: 0 };
+            if (!state || !state.fields) return totals;
+
+            state.fields.forEach((f) => {
+                const resType = BUILDING_TYPES[f.type].resType;
+                if (f.level > 0) {
+                    totals[resType] += getProduction(f.type, f.level);
+                } else {
+                    totals[resType] += 2 * SPEED_MULTIPLIER;
+                }
+            });
+
+            const weatherIndex =
+                typeof state.weatherIndex === "number" ? state.weatherIndex : 0;
+            const weather = WEATHER_PATTERNS[weatherIndex] || WEATHER_PATTERNS[0];
+            const focusKey = state.productionFocus || "balanced";
+            const focus = FOCUS_OPTIONS[focusKey] || FOCUS_OPTIONS.balanced;
+            const councilActive = state.council && state.council.activeUntil > now;
+            const councilMultiplier = councilActive ? COUNCIL_BOOST.multiplier : 1;
+
+            Object.keys(totals).forEach((key) => {
+                totals[key] =
+                    totals[key] *
+                    (weather.modifiers[key] || 1) *
+                    (focus.modifiers[key] || 1) *
+                    councilMultiplier;
+            });
+
+            return totals;
+        };
+
         const getMainBuildingLevel = (buildings) => {
             const mb = buildings.find((b) => b.type === "mainbuilding");
             return mb ? mb.level : 0;
@@ -387,6 +509,17 @@
                         ...INITIAL_STATE,
                         ...parsed,
                         quests: parsed.quests || INITIAL_STATE.quests,
+                        events: parsed.events || INITIAL_STATE.events,
+                        productionFocus:
+                            parsed.productionFocus || INITIAL_STATE.productionFocus,
+                        council: parsed.council || INITIAL_STATE.council,
+                        weatherIndex:
+                            typeof parsed.weatherIndex === "number"
+                                ? parsed.weatherIndex
+                                : INITIAL_STATE.weatherIndex,
+                        nextWeatherChange:
+                            parsed.nextWeatherChange ||
+                            Date.now() + WEATHER_CHANGE_INTERVAL,
                     };
                 }
                 return INITIAL_STATE;
@@ -403,17 +536,30 @@
                     setState((prev) => {
                         const next = { ...prev };
 
-                        // 1. Production
-                        let prod = { wood: 0, clay: 0, iron: 0, crop: 0 };
-                        next.fields.forEach((f) => {
-                            const type = f.type;
-                            const resType = BUILDING_TYPES[type].resType;
-                            if (f.level > 0) {
-                                prod[resType] += getProduction(type, f.level);
-                            } else {
-                                prod[resType] += 2 * SPEED_MULTIPLIER;
-                            }
-                        });
+                        // Weather maintenance
+                        if (!next.events) next.events = [];
+                        if (!next.council)
+                            next.council = { activeUntil: 0, cooldownUntil: 0 };
+                        if (typeof next.weatherIndex !== "number") next.weatherIndex = 0;
+                        if (!next.nextWeatherChange)
+                            next.nextWeatherChange = now + WEATHER_CHANGE_INTERVAL;
+
+                        if (next.nextWeatherChange <= now) {
+                            const newIndex = Math.floor(
+                                Math.random() * WEATHER_PATTERNS.length
+                            );
+                            next.weatherIndex = newIndex;
+                            next.nextWeatherChange = now + WEATHER_CHANGE_INTERVAL;
+                            const weatherName = WEATHER_PATTERNS[newIndex].name;
+                            next.events = pushEvent(
+                                next.events,
+                                `Weather shifted to ${weatherName}.`,
+                                "weather"
+                            );
+                        }
+
+                        // 1. Production (hourly values)
+                        const prod = calculateHourlyProduction(next, now);
 
                         // 2. Crop consumption
                         const troopUpkeep = next.troops.legionnaire;
@@ -525,6 +671,12 @@
                                 next.resources.crop = Math.min(
                                     next.maxGranary,
                                     next.resources.crop + loot.crop
+                                );
+
+                                next.events = pushEvent(
+                                    next.events,
+                                    `${survivors}/${m.troops} Legionnaires returned from ${m.target}.`,
+                                    "raid"
                                 );
                             }
                         });
@@ -674,6 +826,11 @@
                             returnTime: Date.now() + 15000 / SPEED_MULTIPLIER,
                         },
                     ],
+                    events: pushEvent(
+                        prev.events,
+                        `Sent ${amount} Legionnaires towards ${target}.`,
+                        "raid"
+                    ),
                 }));
             };
 
@@ -704,7 +861,65 @@
                         next.resources.crop + reward
                     );
 
+                    next.events = pushEvent(
+                        next.events,
+                        `Quest "${quest.title}" reward claimed!`,
+                        "quest"
+                    );
+
                     return next;
+                });
+            };
+
+            const changeProductionFocus = (focusKey) => {
+                setState((prev) => {
+                    if (prev.productionFocus === focusKey) return prev;
+                    const choice = FOCUS_OPTIONS[focusKey] || FOCUS_OPTIONS.balanced;
+                    return {
+                        ...prev,
+                        productionFocus: focusKey,
+                        events: pushEvent(
+                            prev.events,
+                            `Council shifts focus to ${choice.label}.`,
+                            "policy"
+                        ),
+                    };
+                });
+            };
+
+            const activateCouncilBoost = () => {
+                setState((prev) => {
+                    const now = Date.now();
+                    const council = prev.council || {
+                        activeUntil: 0,
+                        cooldownUntil: 0,
+                    };
+
+                    if (council.activeUntil > now) {
+                        alert("The council's decree is already in effect!");
+                        return prev;
+                    }
+
+                    if (council.cooldownUntil > now) {
+                        const remaining = formatCountdown(
+                            council.cooldownUntil - now
+                        );
+                        alert(`Council resting. Cooldown: ${remaining}`);
+                        return prev;
+                    }
+
+                    return {
+                        ...prev,
+                        council: {
+                            activeUntil: now + COUNCIL_BOOST.duration,
+                            cooldownUntil: now + COUNCIL_BOOST.cooldown,
+                        },
+                        events: pushEvent(
+                            prev.events,
+                            "Council decree: +25% production for 2 minutes!",
+                            "policy"
+                        ),
+                    };
                 });
             };
 
@@ -764,6 +979,224 @@
                 );
             };
 
+            const WeatherPanel = () => {
+                const weather =
+                    WEATHER_PATTERNS[state.weatherIndex] || WEATHER_PATTERNS[0];
+                const remaining = Math.max(
+                    0,
+                    (state.nextWeatherChange || 0) - Date.now()
+                );
+
+                const modifierText = (value) => {
+                    const pct = Math.round((value - 1) * 100);
+                    if (pct === 0) return "±0%";
+                    return `${pct > 0 ? "+" : ""}${pct}%`;
+                };
+
+                return (
+                    <div className="bg-emerald-950/80 border-b border-emerald-900 px-4 py-3 text-slate-100">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <div className="text-[10px] uppercase tracking-wide text-emerald-300">
+                                    Current Weather
+                                </div>
+                                <div className="flex items-center gap-2 text-sm font-semibold">
+                                    <span className="text-xl">{weather.icon}</span>
+                                    {weather.name}
+                                </div>
+                            </div>
+                            <div className="text-right text-[11px] text-emerald-200">
+                                Next change in
+                                <div className="font-mono text-sm">
+                                    {formatCountdown(remaining)}
+                                </div>
+                            </div>
+                        </div>
+                        <p className="text-[11px] text-slate-300 mt-1">
+                            {weather.description}
+                        </p>
+                        <div className="mt-2 grid grid-cols-4 gap-2 text-[10px] text-slate-200">
+                            <span>Wood {modifierText(weather.modifiers.wood)}</span>
+                            <span>Clay {modifierText(weather.modifiers.clay)}</span>
+                            <span>Iron {modifierText(weather.modifiers.iron)}</span>
+                            <span>Crop {modifierText(weather.modifiers.crop)}</span>
+                        </div>
+                    </div>
+                );
+            };
+
+            const ProductionInsights = () => {
+                const prod = calculateHourlyProduction(state);
+                const troopUpkeep = state.troops.legionnaire;
+                const popUpkeep = state.population;
+                const netCrop = prod.crop - troopUpkeep - popUpkeep;
+
+                const rows = [
+                    { key: "wood", label: "Wood" },
+                    { key: "clay", label: "Clay" },
+                    { key: "iron", label: "Iron" },
+                    { key: "crop", label: "Crop" },
+                ];
+
+                const capFor = (key) =>
+                    key === "crop" ? state.maxGranary : state.maxStorage;
+                const timeToCap = (key) => {
+                    const perHour =
+                        key === "crop" ? Math.max(netCrop, 0) : prod[key];
+                    const current = state.resources[key];
+                    const cap = capFor(key);
+                    if (perHour <= 0) return key === "crop" ? "Declining" : "Stable";
+                    if (current >= cap) return "Full";
+                    return formatTimeToCap((cap - current) / perHour);
+                };
+
+                return (
+                    <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3 text-slate-100">
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="text-[11px] uppercase text-slate-400 font-semibold">
+                                Production outlook
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                                per hour
+                            </div>
+                        </div>
+                        <div className="space-y-1">
+                            {rows.map((row) => (
+                                <div
+                                    key={row.key}
+                                    className="flex items-center justify-between text-[11px] bg-slate-950/60 rounded-lg px-2 py-1.5"
+                                >
+                                    <span className="font-semibold text-slate-200">
+                                        {row.label}
+                                    </span>
+                                    <span className="font-mono text-emerald-300">
+                                        {formatNum(Math.max(0, Math.round(prod[row.key])))}
+                                        /h
+                                        {row.key === "crop" && (
+                                            <span className="text-[10px] text-amber-300 ml-1">
+                                                net {formatNum(Math.round(netCrop))}/h
+                                            </span>
+                                        )}
+                                    </span>
+                                    <span className="text-slate-300">
+                                        {timeToCap(row.key)}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                );
+            };
+
+            const StrategyPanel = () => {
+                const now = Date.now();
+                const council = state.council || {
+                    activeUntil: 0,
+                    cooldownUntil: 0,
+                };
+                const councilActive = council.activeUntil > now;
+                const cooldownRemaining = Math.max(0, council.cooldownUntil - now);
+
+                const councilLabel = councilActive
+                    ? "Boost active"
+                    : cooldownRemaining > 0
+                    ? `Cooldown ${formatCountdown(cooldownRemaining)}`
+                    : "Call council";
+
+                return (
+                    <div className="bg-slate-900/80 border border-emerald-800/60 rounded-xl p-3 text-slate-100">
+                        <div className="text-[11px] uppercase text-emerald-300 font-semibold mb-2">
+                            Strategic focus
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            {Object.entries(FOCUS_OPTIONS).map(([key, opt]) => {
+                                const isActive = state.productionFocus === key;
+                                return (
+                                    <button
+                                        key={key}
+                                        type="button"
+                                        onClick={() => changeProductionFocus(key)}
+                                        className={`text-left border rounded-lg px-2 py-2 text-[11px] transition-colors ${
+                                            isActive
+                                                ? "border-emerald-400 bg-emerald-900/40"
+                                                : "border-slate-700 bg-slate-950/50"
+                                        }`}
+                                    >
+                                        <div className="font-semibold text-slate-50">
+                                            {opt.label}
+                                        </div>
+                                        <div className="text-[10px] text-slate-300">
+                                            {opt.description}
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        <div className="mt-3 p-3 rounded-lg bg-emerald-950/60 border border-emerald-800">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <div className="text-xs font-semibold text-emerald-200">
+                                        Council decree
+                                    </div>
+                                    <p className="text-[10px] text-slate-300">
+                                        +25% all production for 2 minutes. Cooldown 10m.
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={activateCouncilBoost}
+                                    disabled={councilActive || cooldownRemaining > 0}
+                                    className={`text-[11px] font-semibold px-3 py-1.5 rounded-lg border ${
+                                        councilActive || cooldownRemaining > 0
+                                            ? "border-slate-700 text-slate-500"
+                                            : "border-emerald-400 text-emerald-200"
+                                    }`}
+                                >
+                                    {councilLabel}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const EventLog = () => {
+                if (!state.events || state.events.length === 0) return null;
+                return (
+                    <div className="mt-5 bg-slate-900/80 border border-slate-800 rounded-xl p-3 text-slate-100">
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="text-[11px] uppercase text-slate-400 font-semibold">
+                                Village newscast
+                            </div>
+                            <span className="text-[10px] text-slate-500">
+                                Latest {state.events.length}
+                            </span>
+                        </div>
+                        <div className="space-y-2 max-h-40 overflow-y-auto game-scroll pr-1">
+                            {state.events.map((event) => (
+                                <div
+                                    key={event.id}
+                                    className="border border-slate-800/80 bg-slate-950/70 rounded-lg px-2.5 py-1.5"
+                                >
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="text-[11px] text-slate-100">
+                                            {event.message}
+                                        </span>
+                                        <span className="text-[10px] text-slate-400">
+                                            {event.time}
+                                        </span>
+                                    </div>
+                                    <span className="text-[10px] uppercase text-emerald-300">
+                                        {event.type}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                );
+            };
+
             const FieldsView = () => (
                 <div className="px-4 py-4 pb-20">
                     <div className="text-center mb-3">
@@ -771,6 +1204,10 @@
                         <p className="text-[11px] text-slate-300">
                             Upgrade fields to increase production.
                         </p>
+                    </div>
+                    <div className="space-y-3 mb-4">
+                        <ProductionInsights />
+                        <StrategyPanel />
                     </div>
                     <div className="grid grid-cols-3 gap-3">
                         {state.fields.map((f, i) => {
@@ -965,6 +1402,8 @@
                             )}
                         </div>
                     </div>
+
+                    <EventLog />
                 </div>
             );
 
@@ -1416,6 +1855,7 @@
                     <div className="w-full max-w-md h-full bg-slate-950/95 text-slate-100 shadow-[0_0_40px_rgba(0,0,0,0.8)] flex flex-col">
                         <TopBar />
                         <ResourceBar />
+                        <WeatherPanel />
 
                         <main className="flex-1 overflow-y-auto overflow-x-hidden game-scroll">
                             {activeTab === "fields" && <FieldsView />}
