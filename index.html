@@ -1177,6 +1177,10 @@
             const [selectedSlot, setSelectedSlot] = useState(null);
             const [modalOpen, setModalOpen] = useState(false);
             const [trainError, setTrainError] = useState("");
+            const [raidModalOpen, setRaidModalOpen] = useState(false);
+            const [raidTarget, setRaidTarget] = useState(null);
+            const [raidAmount, setRaidAmount] = useState("");
+            const [raidError, setRaidError] = useState("");
             const trainInputRef = useRef(null);
 
             useEffect(() => {
@@ -1349,53 +1353,51 @@
                 return true;
             };
 
-            const sendRaid = (targetRef) => {
-                if (!targetRef) return;
-                const normalizedTarget =
-                    typeof targetRef === "string"
-                        ? { id: targetRef, name: targetRef, kind: "neutral" }
-                        : targetRef;
-                const label = normalizedTarget.name || normalizedTarget.id || "target";
-                const amount = parseInt(
-                    prompt(`How many Legionnaires to send to ${label}?`, "1"),
-                    10
-                );
-                if (!amount || isNaN(amount) || amount <= 0) return;
+            const sendRaid = (targetRef, confirmedAmount) => {
+                if (!targetRef) {
+                    return { success: false, error: "Target not found." };
+                }
+
+                const amount = parseInt(confirmedAmount, 10);
+                if (!amount || isNaN(amount) || amount <= 0) {
+                    return { success: false, error: "Enter a positive troop amount." };
+                }
+
                 if (state.troops.legionnaire < amount) {
-                    alert("Not enough troops!");
-                    return;
+                    return { success: false, error: "Not enough troops." };
                 }
 
                 let missionTarget = null;
-                if (normalizedTarget.kind === "ai") {
-                    const ai = state.aiVillages?.find((vill) => vill.id === normalizedTarget.id);
+                if (targetRef.kind === "ai") {
+                    const ai = state.aiVillages?.find((vill) => vill.id === targetRef.id);
                     if (!ai) {
-                        alert("Target village not found.");
-                        return;
+                        return { success: false, error: "Target village not found." };
                     }
                     const now = Date.now();
                     if (ai.raidCooldownUntil && ai.raidCooldownUntil > now) {
-                        alert(
-                            `Scouts need ${formatCountdown(
+                        return {
+                            success: false,
+                            error: `Cooldown remaining ${formatCountdown(
                                 ai.raidCooldownUntil - now
-                            )} before striking ${ai.name} again.`
-                        );
-                        return;
+                            )}`,
+                        };
                     }
                     missionTarget = {
                         id: ai.id,
                         name: ai.name,
                         kind: "ai",
                         travelTime: ai.travelTime,
+                        targetDefense: ai.defense,
+                        lootRange: ai.lootRange,
                     };
                 } else {
                     missionTarget = {
-                        id: normalizedTarget.id,
-                        name: normalizedTarget.name,
-                        kind: "neutral",
-                        travelTime: normalizedTarget.travelTime,
-                        targetDefense: normalizedTarget.defense,
-                        lootRange: normalizedTarget.lootRange,
+                        id: targetRef.id,
+                        name: targetRef.name,
+                        kind: targetRef.kind || "neutral",
+                        travelTime: targetRef.travelTime,
+                        targetDefense: targetRef.defense,
+                        lootRange: targetRef.lootRange,
                     };
                 }
 
@@ -1450,6 +1452,23 @@
                         ),
                     };
                 });
+
+                return { success: true };
+            };
+
+            const handleRaidConfirm = () => {
+                if (!raidTarget) {
+                    setRaidError("Target not found.");
+                    return;
+                }
+
+                const result = sendRaid(raidTarget, raidAmount);
+                if (!result.success) {
+                    setRaidError(result.error || "Unable to send raid.");
+                    return;
+                }
+
+                handleCloseRaidModal();
             };
 
             const claimQuest = (id) => {
@@ -1590,6 +1609,66 @@
                 setModalOpen(false);
             };
 
+            const handleCloseRaidModal = () => {
+                setRaidModalOpen(false);
+                setRaidTarget(null);
+                setRaidAmount("");
+                setRaidError("");
+            };
+
+            const openRaidModal = (targetRef) => {
+                let normalizedTarget = null;
+                let errorMessage = "";
+
+                if (!targetRef) {
+                    errorMessage = "Target not found.";
+                } else if (targetRef.kind === "ai") {
+                    const aiData = state.aiVillages?.find((vill) => vill.id === targetRef.id);
+                    if (!aiData) {
+                        errorMessage = "Target village not found.";
+                    } else {
+                        normalizedTarget = {
+                            id: aiData.id,
+                            name: aiData.name,
+                            kind: "ai",
+                            defense: aiData.defense,
+                            distance: aiData.distance,
+                            travelTime: aiData.travelTime,
+                            lootRange: aiData.lootRange,
+                            stockpile: aiData.resources,
+                            raidCooldownUntil: aiData.raidCooldownUntil,
+                        };
+                        const cooldownRemaining = Math.max(
+                            0,
+                            (aiData.raidCooldownUntil || 0) - Date.now()
+                        );
+                        if (cooldownRemaining > 0) {
+                            errorMessage = `Cooldown remaining ${formatCountdown(cooldownRemaining)}`;
+                        }
+                    }
+                } else {
+                    normalizedTarget = {
+                        id: targetRef.id,
+                        name: targetRef.name,
+                        kind: targetRef.kind || "neutral",
+                        defense: targetRef.defense,
+                        distance: targetRef.distance,
+                        travelTime: targetRef.travelTime,
+                        lootRange: targetRef.lootRange,
+                    };
+                }
+
+                setRaidTarget(normalizedTarget);
+                setRaidAmount(state.troops.legionnaire > 0 ? "1" : "");
+                setRaidError(errorMessage);
+                setRaidModalOpen(true);
+            };
+
+            const handleRaidAmountChange = (value) => {
+                setRaidAmount(value);
+                if (raidError) setRaidError("");
+            };
+
             return (
                 <div className="w-full h-full bg-gradient-to-b from-emerald-900 via-emerald-950 to-slate-950 flex items-stretch justify-center">
                     <div className="w-full max-w-md h-full bg-slate-950/95 text-slate-100 shadow-[0_0_40px_rgba(0,0,0,0.8)] flex flex-col">
@@ -1625,7 +1704,9 @@
                                     events={state.events}
                                 />
                             )}
-                            {activeTab === "map" && <MapView state={state} sendRaid={sendRaid} />}
+                            {activeTab === "map" && (
+                                <MapView state={state} openRaidModal={openRaidModal} />
+                            )}
                         </main>
 
                         <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
@@ -1641,6 +1722,16 @@
                             onTrainTroops={trainTroops}
                             onUpgrade={upgradeBuilding}
                             onConstructBuilding={handleConstructBuilding}
+                        />
+                        <RaidModal
+                            isOpen={raidModalOpen}
+                            target={raidTarget}
+                            availableTroops={state.troops.legionnaire}
+                            amount={raidAmount}
+                            error={raidError}
+                            onAmountChange={handleRaidAmountChange}
+                            onClose={handleCloseRaidModal}
+                            onSend={handleRaidConfirm}
                         />
                     </div>
                 </div>
@@ -2164,7 +2255,7 @@
             </div>
         );
 
-        const MapView = ({ state, sendRaid }) => {
+        const MapView = ({ state, openRaidModal }) => {
             const aiTargets = state.aiVillages || [];
             const now = Date.now();
             const incomingThreats = [...aiTargets]
@@ -2313,13 +2404,12 @@
                                             <button
                                                 type="button"
                                                 onClick={() =>
-                                                    sendRaid({
+                                                    openRaidModal({
                                                         id: ai.id,
                                                         name: ai.name,
                                                         kind: "ai",
                                                     })
                                                 }
-                                                disabled={cooldown > 0}
                                                 className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-transform active:scale-95 ${
                                                     cooldown > 0
                                                         ? "bg-slate-800 text-slate-500"
@@ -2360,7 +2450,7 @@
                                     </div>
                                     <button
                                         type="button"
-                                        onClick={() => sendRaid(site)}
+                                        onClick={() => openRaidModal(site)}
                                         className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-md text-xs font-semibold active:scale-95 transition-transform"
                                     >
                                         Raid
@@ -2639,6 +2729,161 @@
                             >
                                 Upgrade ({10 / SPEED_MULTIPLIER}s)
                             </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const RaidModal = ({
+            isOpen,
+            target,
+            availableTroops,
+            amount,
+            error,
+            onAmountChange,
+            onClose,
+            onSend,
+        }) => {
+            if (!isOpen) return null;
+
+            const now = Date.now();
+            const cooldownRemaining = Math.max(
+                0,
+                (target?.raidCooldownUntil || 0) - now
+            );
+            const travelMs = target?.travelTime || MIN_RAID_TRAVEL_TIME;
+            const travelLabel = formatCountdown(travelMs);
+            const distanceLabel = target?.distance
+                ? `${target.distance} tiles`
+                : "Unknown distance";
+            const lootRange = target?.lootRange;
+            const stockpile = target?.stockpile || {};
+            const resourceIconMap = {
+                wood: Icons.Wood,
+                clay: Icons.Clay,
+                iron: Icons.Iron,
+                crop: Icons.Crop,
+            };
+            const parsedAmount = parseInt(amount, 10);
+            const notEnoughTroops = parsedAmount > availableTroops;
+            const invalidAmount = !parsedAmount || parsedAmount <= 0;
+            const disableSend =
+                !target || invalidAmount || notEnoughTroops || cooldownRemaining > 0;
+
+            let helperText = error || "";
+            if (!helperText && invalidAmount) {
+                helperText = "Enter a troop amount.";
+            } else if (!helperText && notEnoughTroops) {
+                helperText = "Not enough troops ready.";
+            } else if (!helperText && cooldownRemaining > 0) {
+                helperText = `Cooldown remaining ${formatCountdown(cooldownRemaining)}`;
+            } else if (!helperText && !target) {
+                helperText = "Target not found.";
+            }
+
+            return (
+                <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60">
+                    <div className="bg-slate-950 w-full max-w-md px-4 py-4 rounded-t-2xl sm:rounded-2xl shadow-xl border border-slate-800">
+                        <div className="flex justify-between items-center mb-3">
+                            <div>
+                                <h3 className="text-sm font-semibold text-slate-50">Send raid</h3>
+                                <p className="text-[11px] text-slate-400">
+                                    Choose troop count and confirm to dispatch.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={onClose}
+                                className="p-1 rounded-full hover:bg-slate-800"
+                            >
+                                <Icons.X />
+                            </button>
+                        </div>
+
+                        <div className="space-y-3 text-slate-200">
+                            <div className="bg-slate-900/80 border border-slate-800 rounded-lg px-3 py-2">
+                                <div className="flex items-center justify-between mb-1">
+                                    <div className="text-sm font-semibold text-slate-100">
+                                        {target?.name || "Unknown target"}
+                                    </div>
+                                    <span className="text-[10px] uppercase text-slate-400">
+                                        {target?.kind || "unknown"}
+                                    </span>
+                                </div>
+                                <div className="flex flex-wrap gap-3 text-[11px] text-slate-300">
+                                    <span>Defense {target?.defense ?? "?"}</span>
+                                    <span>{distanceLabel}</span>
+                                    <span>Travel {travelLabel}</span>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                                <div className="bg-emerald-950/40 border border-emerald-800 rounded-lg px-3 py-2">
+                                    <div className="text-[10px] uppercase text-emerald-300">Troops ready</div>
+                                    <div className="text-sm font-semibold text-emerald-100">
+                                        {availableTroops}
+                                    </div>
+                                </div>
+                                <div className="bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2">
+                                    <div className="text-[10px] uppercase text-slate-400">Estimated loot</div>
+                                    <div className="text-sm font-semibold text-slate-100">
+                                        {lootRange
+                                            ? `${lootRange[0]}-${lootRange[1]}`
+                                            : stockpile
+                                            ? formatNum(
+                                                  RESOURCE_KEYS.reduce(
+                                                      (sum, key) => sum + (stockpile[key] || 0),
+                                                      0
+                                                  )
+                                              )
+                                            : "Unknown"}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {target && stockpile && Object.keys(stockpile).length > 0 && (
+                                <div className="flex flex-wrap gap-3 text-[11px] text-slate-200">
+                                    {RESOURCE_KEYS.map((key) => (
+                                        <span key={key} className="flex items-center gap-1">
+                                            {resourceIconMap[key] && React.createElement(resourceIconMap[key])}
+                                            {formatNum(stockpile[key] || 0)}
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+
+                            <div>
+                                <label className="text-[11px] text-slate-300 uppercase tracking-wide">
+                                    Legionnaires to send
+                                </label>
+                                <div className="mt-1 flex items-center gap-2">
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        value={amount}
+                                        onChange={(e) => onAmountChange(e.target.value)}
+                                        className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs w-20 text-right"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={onSend}
+                                        disabled={disableSend}
+                                        className={`px-3 py-1.5 rounded-md text-xs font-semibold active:scale-95 transition-transform ${
+                                            disableSend
+                                                ? "bg-slate-800 text-slate-500"
+                                                : "bg-red-600 hover:bg-red-700 text-white"
+                                        }`}
+                                    >
+                                        {cooldownRemaining > 0
+                                            ? `Cooldown ${formatCountdown(cooldownRemaining)}`
+                                            : "Send"}
+                                    </button>
+                                </div>
+                                {helperText && (
+                                    <div className="text-[10px] text-red-400 mt-1">{helperText}</div>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>
