@@ -1545,1269 +1545,1140 @@
                 });
             };
 
-            // --- UI Components ---
-
-            const TopBar = () => (
-                <header className="safe-top bg-emerald-950/95 text-amber-100 border-b border-emerald-800 px-4 py-2 flex items-center justify-between">
-                    <div className="flex flex-col">
-                        <span className="text-xs uppercase tracking-[0.2em] text-emerald-300">
-                            Civitas
-                        </span>
-                        <span className="text-sm font-semibold">Village of Aurelia</span>
-                    </div>
-                    <div className="text-right text-[10px] text-emerald-200">
-                        <div>Pop: {state.population}</div>
-                        <div className="flex items-center gap-1 justify-end">
-                            <Icons.Sword />
-                            <span>{state.troops.legionnaire}</span>
-                        </div>
-                    </div>
-                </header>
-            );
-
-            const ResourceBar = () => {
-                const res = state.resources;
-                const caps = { s: state.maxStorage, g: state.maxGranary };
-
-                const ResItem = ({ icon: Icon, val, max }) => {
-                    const pct = Math.min(100, (val / max) * 100);
-                    return (
-                        <div className="flex flex-col items-center flex-1 min-w-[72px] px-1">
-                            <div className="flex items-center gap-1 mb-0.5">
-                                <Icon />
-                                <span className="text-[11px] font-mono font-semibold">
-                                    {formatNum(val)}
-                                </span>
-                            </div>
-                            <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                                <div
-                                    className="h-full bg-gradient-to-r from-emerald-400 to-amber-400 transition-all duration-300"
-                                    style={{ width: pct + "%" }}
-                                />
-                            </div>
-                        </div>
-                    );
-                };
-
-                return (
-                    <div className="bg-slate-900/95 border-b border-slate-800 px-2 py-2">
-                        <div className="flex gap-1 overflow-x-auto game-scroll">
-                            <ResItem icon={Icons.Wood} val={res.wood} max={caps.s} />
-                            <ResItem icon={Icons.Clay} val={res.clay} max={caps.s} />
-                            <ResItem icon={Icons.Iron} val={res.iron} max={caps.s} />
-                            <ResItem icon={Icons.Crop} val={res.crop} max={caps.g} />
-                        </div>
-                    </div>
-                );
+            const handleSelectSlot = (slot) => {
+                setSelectedSlot(slot);
+                setModalOpen(true);
             };
 
-            const WeatherPanel = () => {
-                const weather =
-                    weatherPatterns[state.weatherIndex] ||
-                    weatherPatterns[0] || {
-                        icon: "?",
-                        name: "Unknown",
-                        description: "Awaiting forecast...",
-                        modifiers: { wood: 1, clay: 1, iron: 1, crop: 1 },
+            const handleCloseModal = () => setModalOpen(false);
+
+            const handleConstructBuilding = (buildingKey, costs, index) => {
+                setState((prev) => {
+                    if (
+                        prev.resources.wood < costs[0] ||
+                        prev.resources.clay < costs[1] ||
+                        prev.resources.iron < costs[2] ||
+                        prev.resources.crop < costs[3]
+                    ) {
+                        return prev;
+                    }
+                    const mainLevel = getMainBuildingLevel(prev.buildings);
+                    const baseTime = 10000;
+                    const timeFactor = 1 - Math.min(0.4, mainLevel * 0.05);
+                    const buildTime = (baseTime * timeFactor) / SPEED_MULTIPLIER;
+
+                    return {
+                        ...prev,
+                        resources: {
+                            wood: prev.resources.wood - costs[0],
+                            clay: prev.resources.clay - costs[1],
+                            iron: prev.resources.iron - costs[2],
+                            crop: prev.resources.crop - costs[3],
+                        },
+                        constQueue: [
+                            ...prev.constQueue,
+                            {
+                                type: buildingKey,
+                                index,
+                                level: 1,
+                                finishTime: Date.now() + buildTime,
+                                isField: false,
+                            },
+                        ],
                     };
-                const remaining = Math.max(
-                    0,
-                    (state.nextWeatherChange || 0) - Date.now()
-                );
+                });
+                setModalOpen(false);
+            };
 
-                const modifierText = (value) => {
-                    const pct = Math.round((value - 1) * 100);
-                    if (pct === 0) return "±0%";
-                    return `${pct > 0 ? "+" : ""}${pct}%`;
-                };
+            return (
+                <div className="w-full h-full bg-gradient-to-b from-emerald-900 via-emerald-950 to-slate-950 flex items-stretch justify-center">
+                    <div className="w-full max-w-md h-full bg-slate-950/95 text-slate-100 shadow-[0_0_40px_rgba(0,0,0,0.8)] flex flex-col">
+                        <TopBar population={state.population} troopCount={state.troops.legionnaire} />
+                        <ResourceBar
+                            resources={state.resources}
+                            maxStorage={state.maxStorage}
+                            maxGranary={state.maxGranary}
+                        />
+                        <WeatherPanel
+                            weatherPatterns={weatherPatterns}
+                            weatherIndex={state.weatherIndex}
+                            nextWeatherChange={state.nextWeatherChange}
+                        />
 
+                        <main className="flex-1 overflow-y-auto overflow-x-hidden game-scroll">
+                            {activeTab === "fields" && (
+                                <FieldsView
+                                    state={state}
+                                    gameData={gameData}
+                                    focusOptions={focusOptions}
+                                    changeProductionFocus={changeProductionFocus}
+                                    activateCouncilBoost={activateCouncilBoost}
+                                    onSelectSlot={handleSelectSlot}
+                                />
+                            )}
+                            {activeTab === "village" && (
+                                <VillageView
+                                    state={state}
+                                    buildingTypes={buildingTypes}
+                                    onSelectSlot={handleSelectSlot}
+                                    claimQuest={claimQuest}
+                                    events={state.events}
+                                />
+                            )}
+                            {activeTab === "map" && <MapView state={state} sendRaid={sendRaid} />}
+                        </main>
+
+                        <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
+                        <BuildingModal
+                            modalOpen={modalOpen}
+                            selectedSlot={selectedSlot}
+                            state={state}
+                            buildingTypes={buildingTypes}
+                            onClose={handleCloseModal}
+                            trainInputRef={trainInputRef}
+                            trainError={trainError}
+                            setTrainError={setTrainError}
+                            onTrainTroops={trainTroops}
+                            onUpgrade={upgradeBuilding}
+                            onConstructBuilding={handleConstructBuilding}
+                        />
+                    </div>
+                </div>
+            );
+        }
+
+        // --- UI Components ---
+
+        const TopBar = ({ population, troopCount }) => (
+            <header className="safe-top bg-emerald-950/95 text-amber-100 border-b border-emerald-800 px-4 py-2 flex items-center justify-between">
+                <div className="flex flex-col">
+                    <span className="text-xs uppercase tracking-[0.2em] text-emerald-300">
+                        Civitas
+                    </span>
+                    <span className="text-sm font-semibold">Village of Aurelia</span>
+                </div>
+                <div className="text-right text-[10px] text-emerald-200">
+                    <div>Pop: {population}</div>
+                    <div className="flex items-center gap-1 justify-end">
+                        <Icons.Sword />
+                        <span>{troopCount}</span>
+                    </div>
+                </div>
+            </header>
+        );
+
+        const ResourceBar = ({ resources, maxStorage, maxGranary }) => {
+            const res = resources || {};
+            const caps = { s: maxStorage, g: maxGranary };
+
+            const ResItem = ({ icon: Icon, val, max }) => {
+                const pct = Math.min(100, (val / max) * 100);
                 return (
-                    <div className="bg-emerald-950/80 border-b border-emerald-900 px-4 py-3 text-slate-100">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <div className="text-[10px] uppercase tracking-wide text-emerald-300">
-                                    Current Weather
-                                </div>
-                                <div className="flex items-center gap-2 text-sm font-semibold">
-                                    <span className="text-xl">{weather.icon}</span>
-                                    {weather.name}
-                                </div>
-                            </div>
-                            <div className="text-right text-[11px] text-emerald-200">
-                                Next change in
-                                <div className="font-mono text-sm">
-                                    {formatCountdown(remaining)}
-                                </div>
-                            </div>
+                    <div className="flex flex-col items-center flex-1 min-w-[72px] px-1">
+                        <div className="flex items-center gap-1 mb-0.5">
+                            <Icon />
+                            <span className="text-[11px] font-mono font-semibold">{formatNum(val)}</span>
                         </div>
-                        <p className="text-[11px] text-slate-300 mt-1">
-                            {weather.description}
-                        </p>
-                        <div className="mt-2 grid grid-cols-4 gap-2 text-[10px] text-slate-200">
-                            <span>Wood {modifierText(weather.modifiers.wood)}</span>
-                            <span>Clay {modifierText(weather.modifiers.clay)}</span>
-                            <span>Iron {modifierText(weather.modifiers.iron)}</span>
-                            <span>Crop {modifierText(weather.modifiers.crop)}</span>
+                        <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-gradient-to-r from-emerald-400 to-amber-400 transition-all duration-300"
+                                style={{ width: pct + "%" }}
+                            />
                         </div>
                     </div>
                 );
             };
 
-            const ProductionInsights = () => {
-                const prod = calculateHourlyProduction(state, gameData);
-                const troopUpkeep = state.troops.legionnaire;
-                const popUpkeep = state.population;
-                const netCrop = prod.crop - troopUpkeep - popUpkeep;
-
-                const rows = [
-                    { key: "wood", label: "Wood" },
-                    { key: "clay", label: "Clay" },
-                    { key: "iron", label: "Iron" },
-                    { key: "crop", label: "Crop" },
-                ];
-
-                const capFor = (key) =>
-                    key === "crop" ? state.maxGranary : state.maxStorage;
-                const timeToCap = (key) => {
-                    const perHour =
-                        key === "crop" ? Math.max(netCrop, 0) : prod[key];
-                    const current = state.resources[key];
-                    const cap = capFor(key);
-                    if (perHour <= 0) return key === "crop" ? "Declining" : "Stable";
-                    if (current >= cap) return "Full";
-                    return formatTimeToCap((cap - current) / perHour);
-                };
-
-                return (
-                    <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3 text-slate-100">
-                        <div className="flex items-center justify-between mb-2">
-                            <div className="text-[11px] uppercase text-slate-400 font-semibold">
-                                Production outlook
-                            </div>
-                            <div className="text-[10px] text-slate-400">
-                                per hour
-                            </div>
-                        </div>
-                        <div className="space-y-1">
-                            {rows.map((row) => (
-                                <div
-                                    key={row.key}
-                                    className="flex items-center justify-between text-[11px] bg-slate-950/60 rounded-lg px-2 py-1.5"
-                                >
-                                    <span className="font-semibold text-slate-200">
-                                        {row.label}
-                                    </span>
-                                    <span className="font-mono text-emerald-300">
-                                        {formatNum(Math.max(0, Math.round(prod[row.key])))}
-                                        /h
-                                        {row.key === "crop" && (
-                                            <span className="text-[10px] text-amber-300 ml-1">
-                                                net {formatNum(Math.round(netCrop))}/h
-                                            </span>
-                                        )}
-                                    </span>
-                                    <span className="text-slate-300">
-                                        {timeToCap(row.key)}
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
+            return (
+                <div className="bg-slate-900/95 border-b border-slate-800 px-2 py-2">
+                    <div className="flex gap-1 overflow-x-auto game-scroll">
+                        <ResItem icon={Icons.Wood} val={res.wood} max={caps.s} />
+                        <ResItem icon={Icons.Clay} val={res.clay} max={caps.s} />
+                        <ResItem icon={Icons.Iron} val={res.iron} max={caps.s} />
+                        <ResItem icon={Icons.Crop} val={res.crop} max={caps.g} />
                     </div>
-                );
+                </div>
+            );
+        };
+
+        const WeatherPanel = ({ weatherPatterns, weatherIndex, nextWeatherChange }) => {
+            const patterns = weatherPatterns || [];
+            const weather =
+                patterns?.[weatherIndex] ||
+                patterns?.[0] || {
+                    icon: "?",
+                    name: "Unknown",
+                    description: "Awaiting forecast...",
+                    modifiers: { wood: 1, clay: 1, iron: 1, crop: 1 },
+                };
+            const remaining = Math.max(0, (nextWeatherChange || 0) - Date.now());
+
+            const modifierText = (value) => {
+                const pct = Math.round((value - 1) * 100);
+                if (pct === 0) return "±0%";
+                return `${pct > 0 ? "+" : ""}${pct}%`;
             };
 
-            const StrategyPanel = () => {
-                const now = Date.now();
-                const council = state.council || {
-                    activeUntil: 0,
-                    cooldownUntil: 0,
-                };
-                const councilActive = council.activeUntil > now;
-                const cooldownRemaining = Math.max(0, council.cooldownUntil - now);
-
-                const councilLabel = councilActive
-                    ? "Boost active"
-                    : cooldownRemaining > 0
-                    ? `Cooldown ${formatCountdown(cooldownRemaining)}`
-                    : "Call council";
-
-                return (
-                    <div className="bg-slate-900/80 border border-emerald-800/60 rounded-xl p-3 text-slate-100">
-                        <div className="text-[11px] uppercase text-emerald-300 font-semibold mb-2">
-                            Strategic focus
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                            {Object.entries(focusOptions).map(([key, opt]) => {
-                                const isActive = state.productionFocus === key;
-                                return (
-                                    <button
-                                        key={key}
-                                        type="button"
-                                        onClick={() => changeProductionFocus(key)}
-                                        className={`text-left border rounded-lg px-2 py-2 text-[11px] transition-colors ${
-                                            isActive
-                                                ? "border-emerald-400 bg-emerald-900/40"
-                                                : "border-slate-700 bg-slate-950/50"
-                                        }`}
-                                    >
-                                        <div className="font-semibold text-slate-50">
-                                            {opt.label}
-                                        </div>
-                                        <div className="text-[10px] text-slate-300">
-                                            {opt.description}
-                                        </div>
-                                    </button>
-                                );
-                            })}
-                        </div>
-
-                        <div className="mt-3 p-3 rounded-lg bg-emerald-950/60 border border-emerald-800">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <div className="text-xs font-semibold text-emerald-200">
-                                        Council decree
-                                    </div>
-                                    <p className="text-[10px] text-slate-300">
-                                        +25% all production for 2 minutes. Cooldown 10m.
-                                    </p>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={activateCouncilBoost}
-                                    disabled={councilActive || cooldownRemaining > 0}
-                                    className={`text-[11px] font-semibold px-3 py-1.5 rounded-lg border ${
-                                        councilActive || cooldownRemaining > 0
-                                            ? "border-slate-700 text-slate-500"
-                                            : "border-emerald-400 text-emerald-200"
-                                    }`}
-                                >
-                                    {councilLabel}
-                                </button>
+            return (
+                <div className="bg-emerald-950/80 border-b border-emerald-900 px-4 py-3 text-slate-100">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <div className="text-[10px] uppercase tracking-wide text-emerald-300">
+                                Current Weather
                             </div>
+                            <div className="flex items-center gap-2 text-sm font-semibold">
+                                <span className="text-xl">{weather.icon}</span>
+                                {weather.name}
+                            </div>
+                        </div>
+                        <div className="text-right text-[11px] text-emerald-200">
+                            Next change in
+                            <div className="font-mono text-sm">{formatCountdown(remaining)}</div>
                         </div>
                     </div>
-                );
+                    <p className="text-[11px] text-slate-300 mt-1">{weather.description}</p>
+                    <div className="mt-2 grid grid-cols-4 gap-2 text-[10px] text-slate-200">
+                        <span>Wood {modifierText(weather.modifiers.wood)}</span>
+                        <span>Clay {modifierText(weather.modifiers.clay)}</span>
+                        <span>Iron {modifierText(weather.modifiers.iron)}</span>
+                        <span>Crop {modifierText(weather.modifiers.crop)}</span>
+                    </div>
+                </div>
+            );
+        };
+
+        const ProductionInsights = ({ state, gameData }) => {
+            const prod = calculateHourlyProduction(state, gameData);
+            const troopUpkeep = state.troops.legionnaire;
+            const popUpkeep = state.population;
+            const netCrop = prod.crop - troopUpkeep - popUpkeep;
+
+            const rows = [
+                { key: "wood", label: "Wood" },
+                { key: "clay", label: "Clay" },
+                { key: "iron", label: "Iron" },
+                { key: "crop", label: "Crop" },
+            ];
+
+            const capFor = (key) => (key === "crop" ? state.maxGranary : state.maxStorage);
+            const timeToCap = (key) => {
+                const perHour = key === "crop" ? Math.max(netCrop, 0) : prod[key];
+                const current = state.resources[key];
+                const cap = capFor(key);
+                if (perHour <= 0) return key === "crop" ? "Declining" : "Stable";
+                if (current >= cap) return "Full";
+                return formatTimeToCap((cap - current) / perHour);
             };
 
-            const EventLog = () => {
-                if (!state.events || state.events.length === 0) return null;
-                return (
-                    <div className="mt-5 bg-slate-900/80 border border-slate-800 rounded-xl p-3 text-slate-100">
-                        <div className="flex items-center justify-between mb-2">
-                            <div className="text-[11px] uppercase text-slate-400 font-semibold">
-                                Village newscast
-                            </div>
-                            <span className="text-[10px] text-slate-500">
-                                Latest {state.events.length}
-                            </span>
+            return (
+                <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3 text-slate-100">
+                    <div className="flex items-center justify-between mb-2">
+                        <div className="text-[11px] uppercase text-slate-400 font-semibold">
+                            Production outlook
                         </div>
-                        <div className="space-y-2 max-h-40 overflow-y-auto game-scroll pr-1">
-                            {state.events.map((event) => (
-                                <div
-                                    key={event.id}
-                                    className="border border-slate-800/80 bg-slate-950/70 rounded-lg px-2.5 py-1.5"
-                                >
-                                    <div className="flex items-center justify-between gap-2">
-                                        <span className="text-[11px] text-slate-100">
-                                            {event.message}
+                        <div className="text-[10px] text-slate-400">per hour</div>
+                    </div>
+                    <div className="space-y-1">
+                        {rows.map((row) => (
+                            <div
+                                key={row.key}
+                                className="flex items-center justify-between text-[11px] bg-slate-950/60 rounded-lg px-2 py-1.5"
+                            >
+                                <span className="font-semibold text-slate-200">{row.label}</span>
+                                <span className="font-mono text-emerald-300">
+                                    {formatNum(Math.max(0, Math.round(prod[row.key])))}
+                                    /h
+                                    {row.key === "crop" && (
+                                        <span className="text-[10px] text-amber-300 ml-1">
+                                            net {formatNum(Math.round(netCrop))}/h
                                         </span>
-                                        <span className="text-[10px] text-slate-400">
-                                            {event.time}
-                                        </span>
-                                    </div>
-                                    <span className="text-[10px] uppercase text-emerald-300">
-                                        {event.type}
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
+                                    )}
+                                </span>
+                                <span className="text-slate-300">{timeToCap(row.key)}</span>
+                            </div>
+                        ))}
                     </div>
-                );
+                </div>
+            );
+        };
+
+        const StrategyPanel = ({
+            state,
+            focusOptions,
+            changeProductionFocus,
+            activateCouncilBoost,
+        }) => {
+            const now = Date.now();
+            const council = state.council || {
+                activeUntil: 0,
+                cooldownUntil: 0,
             };
+            const councilActive = council.activeUntil > now;
+            const cooldownRemaining = Math.max(0, council.cooldownUntil - now);
 
-            const FieldsView = () => (
-                <div className="px-4 py-4 pb-20">
-                    <div className="text-center mb-3">
-                        <h2 className="text-lg font-semibold text-emerald-100">Resource Fields</h2>
-                        <p className="text-[11px] text-slate-300">
-                            Upgrade fields to increase production.
-                        </p>
-                    </div>
-                    <div className="space-y-3 mb-4">
-                        <ProductionInsights />
-                        <StrategyPanel />
-                    </div>
-                    <div className="grid grid-cols-3 gap-3">
-                        {state.fields.map((f, i) => {
-                            const isBuilding = state.constQueue.find(
-                                (q) => q.isField && q.index === i
-                            );
-                            let borderColor = "border-slate-700 bg-slate-900/70";
-                            if (f.type === "woodcutter")
-                                borderColor = "border-amber-500/60 bg-amber-950/30";
-                            if (f.type === "claypit")
-                                borderColor = "border-orange-500/60 bg-orange-950/30";
-                            if (f.type === "ironmine")
-                                borderColor = "border-slate-400/60 bg-slate-950/50";
-                            if (f.type === "cropland")
-                                borderColor = "border-yellow-400/60 bg-yellow-950/30";
+            const councilLabel = councilActive
+                ? "Boost active"
+                : cooldownRemaining > 0
+                ? `Cooldown ${formatCountdown(cooldownRemaining)}`
+                : "Call council";
 
+            return (
+                <div className="bg-slate-900/80 border border-emerald-800/60 rounded-xl p-3 text-slate-100">
+                    <div className="text-[11px] uppercase text-emerald-300 font-semibold mb-2">
+                        Strategic focus
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                        {Object.entries(focusOptions).map(([key, opt]) => {
+                            const isActive = state.productionFocus === key;
                             return (
                                 <button
+                                    key={key}
                                     type="button"
-                                    key={i}
-                                    onClick={() => {
-                                        setSelectedSlot({
-                                            index: i,
-                                            isField: true,
-                                            level: f.level,
-                                            type: f.type,
-                                        });
-                                        setModalOpen(true);
-                                    }}
-                                    className={`aspect-square rounded-xl border ${borderColor} flex flex-col items-center justify-center relative shadow-sm active:scale-95 transition-transform`}
+                                    onClick={() => changeProductionFocus(key)}
+                                    className={`text-left border rounded-lg px-2 py-2 text-[11px] transition-colors ${
+                                        isActive
+                                            ? "border-emerald-400 bg-emerald-900/40"
+                                            : "border-slate-700 bg-slate-950/50"
+                                    }`}
                                 >
-                                    <div className="font-bold text-xl text-slate-50 mb-1">
-                                        {f.level}
-                                    </div>
-                                    {f.type === "woodcutter" && <Icons.Wood />}
-                                    {f.type === "claypit" && <Icons.Clay />}
-                                    {f.type === "ironmine" && <Icons.Iron />}
-                                    {f.type === "cropland" && <Icons.Crop />}
-
-                                    {isBuilding && (
-                                        <div className="absolute inset-0 bg-black/40 rounded-xl flex items-center justify-center">
-                                            <div className="flex items-center gap-2 text-xs text-emerald-200">
-                                                <div className="animate-spin">
-                                                    <Icons.Timer />
-                                                </div>
-                                                <span>Building...</span>
-                                            </div>
-                                        </div>
-                                    )}
+                                    <div className="font-semibold text-slate-50">{opt.label}</div>
+                                    <div className="text-[10px] text-slate-300">{opt.description}</div>
                                 </button>
+                            );
+                        })}
+                    </div>
+
+                    <div className="mt-3 p-3 rounded-lg bg-emerald-950/60 border border-emerald-800">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <div className="text-xs font-semibold text-emerald-200">Council decree</div>
+                                <p className="text-[10px] text-slate-300">
+                                    +25% all production for 2 minutes. Cooldown 10m.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={activateCouncilBoost}
+                                disabled={councilActive || cooldownRemaining > 0}
+                                className={`text-[11px] font-semibold px-3 py-1.5 rounded-lg border ${
+                                    councilActive || cooldownRemaining > 0
+                                        ? "border-slate-700 text-slate-500"
+                                        : "border-emerald-400 text-emerald-200"
+                                }`}
+                            >
+                                {councilLabel}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const EventLog = ({ events }) => {
+            if (!events || events.length === 0) return null;
+            return (
+                <div className="mt-5 bg-slate-900/80 border border-slate-800 rounded-xl p-3 text-slate-100">
+                    <div className="flex items-center justify-between mb-2">
+                        <div className="text-[11px] uppercase text-slate-400 font-semibold">Village newscast</div>
+                        <span className="text-[10px] text-slate-500">Latest {events.length}</span>
+                    </div>
+                    <div className="space-y-2 max-h-40 overflow-y-auto game-scroll pr-1">
+                        {events.map((event) => (
+                            <div
+                                key={event.id}
+                                className="border border-slate-800/80 bg-slate-950/70 rounded-lg px-2.5 py-1.5"
+                            >
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-[11px] text-slate-100">{event.message}</span>
+                                    <span className="text-[10px] text-slate-400">{event.time}</span>
+                                </div>
+                                <span className="text-[10px] uppercase text-emerald-300">{event.type}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const FieldsView = ({
+            state,
+            gameData,
+            focusOptions,
+            changeProductionFocus,
+            activateCouncilBoost,
+            onSelectSlot,
+        }) => (
+            <div className="px-4 py-4 pb-20">
+                <div className="text-center mb-3">
+                    <h2 className="text-lg font-semibold text-emerald-100">Resource Fields</h2>
+                    <p className="text-[11px] text-slate-300">Upgrade fields to increase production.</p>
+                </div>
+                <div className="space-y-3 mb-4">
+                    <ProductionInsights state={state} gameData={gameData} />
+                    <StrategyPanel
+                        state={state}
+                        focusOptions={focusOptions}
+                        changeProductionFocus={changeProductionFocus}
+                        activateCouncilBoost={activateCouncilBoost}
+                    />
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                    {state.fields.map((f, i) => {
+                        const isBuilding = state.constQueue.find((q) => q.isField && q.index === i);
+                        let borderColor = "border-slate-700 bg-slate-900/70";
+                        if (f.type === "woodcutter") borderColor = "border-amber-500/60 bg-amber-950/30";
+                        if (f.type === "claypit") borderColor = "border-orange-500/60 bg-orange-950/30";
+                        if (f.type === "ironmine") borderColor = "border-slate-400/60 bg-slate-950/50";
+                        if (f.type === "cropland") borderColor = "border-yellow-400/60 bg-yellow-950/30";
+
+                        return (
+                            <button
+                                type="button"
+                                key={i}
+                                onClick={() =>
+                                    onSelectSlot({
+                                        index: i,
+                                        isField: true,
+                                        level: f.level,
+                                        type: f.type,
+                                    })
+                                }
+                                className={`aspect-square rounded-xl border ${borderColor} flex flex-col items-center justify-center relative shadow-sm active:scale-95 transition-transform`}
+                            >
+                                <div className="font-bold text-xl text-slate-50 mb-1">{f.level}</div>
+                                {f.type === "woodcutter" && <Icons.Wood />}
+                                {f.type === "claypit" && <Icons.Clay />}
+                                {f.type === "ironmine" && <Icons.Iron />}
+                                {f.type === "cropland" && <Icons.Crop />}
+
+                                {isBuilding && (
+                                    <div className="absolute inset-0 bg-black/40 rounded-xl flex items-center justify-center">
+                                        <div className="flex items-center gap-2 text-xs text-emerald-200">
+                                            <div className="animate-spin">
+                                                <Icons.Timer />
+                                            </div>
+                                            <span>Building...</span>
+                                        </div>
+                                    </div>
+                                )}
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+        );
+
+        const VillageStatsPanel = ({ state, buildingTypes }) => {
+            const stats = state.stats || calculateVillageStats(state);
+            const palisadeLevel = getBuildingLevelByType(state.buildings, "palisade");
+            const watchtowerLevel = getBuildingLevelByType(state.buildings, "watchtower");
+            const marketLevel = getBuildingLevelByType(state.buildings, "market");
+            const academyLevel = getBuildingLevelByType(state.buildings, "academy");
+            const defenseTroops = Math.floor((stats.defense || 0) / 6);
+            const scoutingMitigation = Math.round(Math.min(0.5, (stats.scouting || 0) / 200) * 100);
+            const tradePerHour = Math.floor(Math.max(0, stats.prosperity || 0) * 0.4);
+            const knowledgeBoost = Math.min(30, academyLevel * 5);
+
+            const cards = [
+                {
+                    key: "defense",
+                    label: "Defense",
+                    value: stats.defense || 0,
+                    detail: `${defenseTroops} stationed`,
+                    icon: Icons.Shield,
+                },
+                {
+                    key: "scouting",
+                    label: "Scouting",
+                    value: stats.scouting || 0,
+                    detail: `-${scoutingMitigation}% raid impact`,
+                    icon: Icons.Eye,
+                },
+                {
+                    key: "prosperity",
+                    label: "Prosperity",
+                    value: stats.prosperity || 0,
+                    detail: `+${tradePerHour}/h trickle`,
+                    icon: Icons.Coin,
+                },
+                {
+                    key: "knowledge",
+                    label: "Knowledge",
+                    value: stats.knowledge || 0,
+                    detail: `Training -${knowledgeBoost}%`,
+                    icon: Icons.Book,
+                },
+            ];
+
+            return (
+                <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3 mb-4">
+                    <div className="text-[11px] uppercase text-slate-400 font-semibold mb-2">
+                        Village overview
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                        {cards.map((card) => {
+                            const IconComp = card.icon;
+                            return (
+                                <div
+                                    key={card.key}
+                                    className="border border-slate-700/70 rounded-lg px-2.5 py-2 bg-slate-950/50 text-slate-100"
+                                >
+                                    <div className="flex items-center justify-between text-xs">
+                                        <div className="flex items-center gap-1">
+                                            <IconComp />
+                                            <span className="font-semibold">{card.label}</span>
+                                        </div>
+                                        <span className="font-mono">{card.value}</span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 mt-1">{card.detail}</div>
+                                </div>
                             );
                         })}
                     </div>
                 </div>
             );
+        };
 
-            const VillageStatsPanel = () => {
-                const stats = state.stats || calculateVillageStats(state);
-                const palisadeLevel = getBuildingLevelByType(
-                    state.buildings,
-                    "palisade"
-                );
-                const watchtowerLevel = getBuildingLevelByType(
-                    state.buildings,
-                    "watchtower"
-                );
-                const marketLevel = getBuildingLevelByType(state.buildings, "market");
-                const academyLevel = getBuildingLevelByType(state.buildings, "academy");
-                const defenseTroops = Math.floor((stats.defense || 0) / 6);
-                const scoutingMitigation = Math.round(
-                    Math.min(0.5, (stats.scouting || 0) / 200) * 100
-                );
-                const tradePerHour = Math.floor(
-                    Math.max(0, stats.prosperity || 0) * 0.4
-                );
-                const knowledgeBoost = Math.min(30, academyLevel * 5);
+        const VillageView = ({ state, buildingTypes, onSelectSlot, claimQuest, events }) => (
+            <div className="px-4 py-4 pb-24">
+                <div className="text-center mb-3">
+                    <h2 className="text-lg font-semibold text-emerald-100">Village Center</h2>
+                    <p className="text-[11px] text-slate-300">Construct and upgrade infrastructure.</p>
+                </div>
+                <VillageStatsPanel state={state} buildingTypes={buildingTypes} />
+                <div className="grid grid-cols-2 gap-3">
+                    {state.buildings.map((b, i) => {
+                        const isBuilding = state.constQueue.find((q) => !q.isField && q.index === i);
+                        return (
+                            <button
+                                key={b.id}
+                                type="button"
+                                onClick={() =>
+                                    onSelectSlot({
+                                        index: i,
+                                        isField: false,
+                                        level: b.level,
+                                        type: b.type,
+                                    })
+                                }
+                                className="h-24 rounded-lg border border-slate-700 bg-slate-900/80 shadow-sm flex flex-col items-center justify-center px-2 relative active:bg-slate-800/80"
+                            >
+                                {b.type ? (
+                                    <>
+                                        <div className="font-semibold text-xs text-center text-slate-50 mb-1">
+                                            {buildingTypes[b.type]?.name || "Structure"}
+                                        </div>
+                                        <div className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-slate-200">
+                                            Lvl {b.level}
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="text-slate-500 text-xs font-medium">Empty Slot</div>
+                                )}
 
-                const cards = [
-                    {
-                        key: "defense",
-                        label: "Defense",
-                        icon: Icons.Shield,
-                        value: stats.defense,
-                        detail:
-                            palisadeLevel > 0
-                                ? `Palisade lvl ${palisadeLevel} adds ${defenseTroops} extra defenders.`
-                                : "Build a Palisade to fortify the village.",
-                    },
-                    {
-                        key: "scouting",
-                        label: "Scouting",
-                        icon: Icons.Eye,
-                        value: stats.scouting,
-                        detail:
-                            watchtowerLevel > 0
-                                ? `Watchtower lvl ${watchtowerLevel} softens raids by ~${scoutingMitigation}%.`
-                                : "Erect a Watchtower to spot threats earlier.",
-                    },
-                    {
-                        key: "prosperity",
-                        label: "Prosperity",
-                        icon: Icons.Coin,
-                        value: stats.prosperity,
-                        detail:
-                            marketLevel > 0
-                                ? `Market brings in ~${tradePerHour}/h bonus resources.`
-                                : "Markets unlock steady trade trickles.",
-                    },
-                    {
-                        key: "knowledge",
-                        label: "Knowledge",
-                        icon: Icons.Book,
-                        value: stats.knowledge,
-                        detail:
-                            academyLevel > 0
-                                ? `Academy cuts troop training by ${knowledgeBoost}%.`
-                                : "An academy accelerates military research.",
-                    },
-                ];
+                                {isBuilding && (
+                                    <div className="absolute inset-0 bg-emerald-500/10 rounded-lg border border-emerald-400 flex flex-col items-center justify-center">
+                                        <span className="text-[11px] font-bold text-emerald-100 bg-slate-900/80 px-2 py-1 rounded">
+                                            Construction
+                                        </span>
+                                    </div>
+                                )}
+                            </button>
+                        );
+                    })}
+                </div>
 
-                return (
-                    <div className="bg-slate-900/85 border border-slate-800 rounded-xl p-3 text-slate-100 mb-4">
-                        <div className="text-[11px] uppercase text-slate-400 font-semibold mb-2">
-                            Civic metrics
+                <div className="mt-5 bg-slate-900/90 border border-slate-700 text-slate-50 rounded-lg p-3 shadow">
+                    <div className="flex justify-between items-center mb-2">
+                        <div className="flex items-center gap-2">
+                            <Icons.Sword />
+                            <h3 className="font-semibold text-sm">Army</h3>
                         </div>
-                        <div className="grid grid-cols-2 gap-2">
-                            {cards.map((card) => {
-                                const IconComp = card.icon;
+                        <span className="text-amber-300 font-mono text-sm">{state.troops.legionnaire} units</span>
+                    </div>
+                    {state.trainingQueue.length > 0 && (
+                        <div className="text-[11px] text-slate-300 bg-slate-800/80 px-2 py-1.5 rounded">
+                            Training {state.trainingQueue[0].amount} units...
+                        </div>
+                    )}
+                    {state.trainingQueue.length === 0 && (
+                        <div className="text-[11px] text-slate-400">
+                            No units training. Build a Barracks to train troops.
+                        </div>
+                    )}
+                </div>
+
+                <div className="mt-5 bg-slate-900/90 border border-amber-700/70 text-slate-50 rounded-lg p-3 shadow">
+                    <div className="flex justify-between items-center mb-2">
+                        <div className="flex items-center gap-2">
+                            <span className="text-amber-300 text-lg">★</span>
+                            <h3 className="font-semibold text-sm">Quests</h3>
+                        </div>
+                        <span className="text-[10px] uppercase text-amber-300">Goals</span>
+                    </div>
+                    <div className="space-y-2 max-h-40 overflow-y-auto game-scroll">
+                        {state.quests && state.quests.length > 0 ? (
+                            state.quests.map((q) => (
+                                <div
+                                    key={q.id}
+                                    className="border border-slate-700/80 bg-slate-950/80 rounded-md px-2.5 py-2 flex justify-between items-start gap-2"
+                                >
+                                    <div>
+                                        <div className="text-xs font-semibold text-slate-50">{q.title}</div>
+                                        <div className="text-[11px] text-slate-300">{q.desc}</div>
+                                    </div>
+                                    <div className="flex flex-col items-end gap-1">
+                                        <span
+                                            className={
+                                                "text-[10px] px-2 py-0.5 rounded-full " +
+                                                (q.claimed
+                                                    ? "bg-emerald-900/70 text-emerald-300"
+                                                    : q.completed
+                                                    ? "bg-amber-900/70 text-amber-300"
+                                                    : "bg-slate-800 text-slate-300")
+                                            }
+                                        >
+                                            {q.claimed ? "Claimed" : q.completed ? "Ready" : "In progress"}
+                                        </span>
+                                        {q.completed && !q.claimed && (
+                                            <button
+                                                type="button"
+                                                onClick={() => claimQuest(q.id)}
+                                                className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-semibold px-2.5 py-1 rounded-md active:scale-95 transition-transform"
+                                            >
+                                                Claim
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            ))
+                        ) : (
+                            <div className="text-center text-slate-500 text-xs py-2">
+                                No quests available right now.
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <EventLog events={events} />
+            </div>
+        );
+
+        const MapView = ({ state, sendRaid }) => {
+            const aiTargets = state.aiVillages || [];
+            const now = Date.now();
+            const incomingThreats = [...aiTargets]
+                .filter((ai) => ai.nextAttack)
+                .sort((a, b) => (a.nextAttack || 0) - (b.nextAttack || 0));
+            const stats = state.stats || calculateVillageStats(state);
+            const scoutingMitigation = Math.round(Math.min(0.5, (stats.scouting || 0) / 200) * 100);
+
+            return (
+                <div className="px-4 py-4 pb-24">
+                    <div className="text-center mb-4">
+                        <h2 className="text-lg font-semibold text-emerald-100">World Map</h2>
+                        <p className="text-[11px] text-slate-300">
+                            Scouts report nearby activity. Launch raids or prepare defenses.
+                        </p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 mb-5">
+                        <div className="bg-emerald-950/70 border border-emerald-800 rounded-xl px-3 py-3 text-left">
+                            <div className="text-[10px] uppercase text-emerald-300 tracking-wide">Next threat</div>
+                            <div className="text-sm font-semibold text-emerald-100">
+                                {incomingThreats[0]?.name || "Calm skies"}
+                            </div>
+                            <div className="text-[11px] text-slate-300">
+                                {incomingThreats[0]?.nextAttack
+                                    ? formatCountdown(incomingThreats[0].nextAttack - now)
+                                    : "No movement spotted"}
+                            </div>
+                        </div>
+                        <div className="bg-slate-900/80 border border-slate-700 rounded-xl px-3 py-3 text-left">
+                            <div className="text-[10px] uppercase text-slate-400 tracking-wide">Garrison ready</div>
+                            <div className="text-sm font-semibold text-slate-100">
+                                {state.troops.legionnaire} Legionnaires
+                            </div>
+                            <div className="text-[11px] text-slate-400">
+                                Defend the village or send raiding parties.
+                            </div>
+                        </div>
+                        <div className="bg-slate-950/70 border border-indigo-800 rounded-xl px-3 py-3 text-left col-span-2">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <div className="text-[10px] uppercase text-indigo-300 tracking-wide">Fortifications</div>
+                                    <div className="flex items-center gap-1 text-sm font-semibold text-indigo-100">
+                                        <Icons.Shield /> Defense {stats.defense || 0}
+                                    </div>
+                                </div>
+                                <div className="text-right text-[10px] text-indigo-200">
+                                    Scouting reduces raids by ~{scoutingMitigation}%
+                                    <div className="flex items-center gap-1 justify-end text-xs text-slate-200">
+                                        <Icons.Eye /> {stats.scouting || 0}
+                                    </div>
+                                </div>
+                            </div>
+                            <p className="text-[11px] text-slate-300 mt-1">
+                                Prosperity trickle: ~{Math.floor(Math.max(0, stats.prosperity || 0) * 0.4)} resources/h
+                            </p>
+                        </div>
+                    </div>
+
+                    {state.missions.length > 0 && (
+                        <div className="mb-4 space-y-2">
+                            <h3 className="text-[11px] font-semibold uppercase text-slate-300">Active Movements</h3>
+                            {state.missions.map((m, i) => {
+                                const remaining = Math.max(0, m.returnTime - Date.now());
                                 return (
                                     <div
-                                        key={card.key}
-                                        className="border border-slate-800 rounded-lg px-2.5 py-2 bg-slate-950/70 flex flex-col gap-1"
+                                        key={m.id || i}
+                                        className="bg-sky-950/70 border border-sky-700/70 px-3 py-2 rounded-lg flex justify-between items-center"
                                     >
-                                        <div className="flex items-center justify-between text-xs">
-                                            <span className="flex items-center gap-1 text-slate-200">
-                                                <IconComp /> {card.label}
-                                            </span>
-                                            <span className="font-mono text-emerald-300">
-                                                {card.value}
-                                            </span>
+                                        <div>
+                                            <div className="font-semibold text-xs text-sky-100">
+                                                {m.type === "raid" ? "Raiding" : "Moving"} {m.targetName || m.target}
+                                            </div>
+                                            <div className="text-[11px] text-sky-300">
+                                                {m.troops} troops · {m.targetKind || "unknown"}
+                                            </div>
                                         </div>
-                                        <div className="text-[10px] text-slate-400 leading-tight">
-                                            {card.detail}
+                                        <div className="text-[11px] font-mono bg-sky-900/80 px-2 py-1 rounded text-sky-100">
+                                            {formatCountdown(remaining)}
                                         </div>
                                     </div>
                                 );
                             })}
                         </div>
-                    </div>
-                );
-            };
+                    )}
 
-            const VillageView = () => (
-                <div className="px-4 py-4 pb-24">
-                    <div className="text-center mb-3">
-                        <h2 className="text-lg font-semibold text-emerald-100">Village Center</h2>
-                        <p className="text-[11px] text-slate-300">
-                            Construct and upgrade infrastructure.
-                        </p>
-                    </div>
-                    <VillageStatsPanel />
-                    <div className="grid grid-cols-2 gap-3">
-                        {state.buildings.map((b, i) => {
-                            const isBuilding = state.constQueue.find(
-                                (q) => !q.isField && q.index === i
-                            );
-                            return (
-                                <button
-                                    key={b.id}
-                                    type="button"
-                                    onClick={() => {
-                                        setSelectedSlot({
-                                            index: i,
-                                            isField: false,
-                                            level: b.level,
-                                            type: b.type,
-                                        });
-                                        setModalOpen(true);
-                                    }}
-                                    className="h-24 rounded-lg border border-slate-700 bg-slate-900/80 shadow-sm flex flex-col items-center justify-center px-2 relative active:bg-slate-800/80"
-                                >
-                                    {b.type ? (
-                                        <>
-                                            <div className="font-semibold text-xs text-center text-slate-50 mb-1">
-                                                {buildingTypes[b.type]?.name || "Structure"}
-                                            </div>
-                                            <div className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-slate-200">
-                                                Lvl {b.level}
-                                            </div>
-                                        </>
-                                    ) : (
-                                        <div className="text-slate-500 text-xs font-medium">
-                                            Empty Slot
-                                        </div>
-                                    )}
-
-                                    {isBuilding && (
-                                        <div className="absolute inset-0 bg-emerald-500/10 rounded-lg border border-emerald-400 flex flex-col items-center justify-center">
-                                            <span className="text-[11px] font-bold text-emerald-100 bg-slate-900/80 px-2 py-1 rounded">
-                                                Construction
-                                            </span>
-                                        </div>
-                                    )}
-                                </button>
-                            );
-                        })}
-                    </div>
-
-                    <div className="mt-5 bg-slate-900/90 border border-slate-700 text-slate-50 rounded-lg p-3 shadow">
-                        <div className="flex justify-between items-center mb-2">
-                            <div className="flex items-center gap-2">
-                                <Icons.Sword />
-                                <h3 className="font-semibold text-sm">Army</h3>
-                            </div>
-                            <span className="text-amber-300 font-mono text-sm">
-                                {state.troops.legionnaire} units
-                            </span>
-                        </div>
-                        {state.trainingQueue.length > 0 && (
-                            <div className="text-[11px] text-slate-300 bg-slate-800/80 px-2 py-1.5 rounded">
-                                Training {state.trainingQueue[0].amount} units...
-                            </div>
-                        )}
-                        {state.trainingQueue.length === 0 && (
-                            <div className="text-[11px] text-slate-400">
-                                No units training. Build a Barracks to train troops.
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="mt-5 bg-slate-900/90 border border-amber-700/70 text-slate-50 rounded-lg p-3 shadow">
-                        <div className="flex justify-between items-center mb-2">
-                            <div className="flex items-center gap-2">
-                                <span className="text-amber-300 text-lg">★</span>
-                                <h3 className="font-semibold text-sm">Quests</h3>
-                            </div>
-                            <span className="text-[10px] uppercase text-amber-300">
-                                Goals
-                            </span>
-                        </div>
-                        <div className="space-y-2 max-h-40 overflow-y-auto game-scroll">
-                            {state.quests && state.quests.length > 0 ? (
-                                state.quests.map((q) => (
+                    {incomingThreats.length > 0 && (
+                        <div className="mb-5">
+                            <h3 className="text-[11px] font-semibold uppercase text-slate-300 mb-2">Incoming threats</h3>
+                            <div className="space-y-2">
+                                {incomingThreats.slice(0, 3).map((ai) => (
                                     <div
-                                        key={q.id}
-                                        className="border border-slate-700/80 bg-slate-950/80 rounded-md px-2.5 py-2 flex justify-between items-start gap-2"
+                                        key={ai.id}
+                                        className="bg-amber-950/40 border border-amber-700/60 rounded-lg px-3 py-2 flex justify-between items-center"
                                     >
                                         <div>
-                                            <div className="text-xs font-semibold text-slate-50">
-                                                {q.title}
-                                            </div>
-                                            <div className="text-[11px] text-slate-300">
-                                                {q.desc}
+                                            <div className="text-xs font-semibold text-amber-200">{ai.name}</div>
+                                            <div className="text-[11px] text-amber-300">
+                                                Attack in {formatCountdown((ai.nextAttack || 0) - now)}
                                             </div>
                                         </div>
-                                        <div className="flex flex-col items-end gap-1">
-                                            <span
-                                                className={
-                                                    "text-[10px] px-2 py-0.5 rounded-full " +
-                                                    (q.claimed
-                                                        ? "bg-emerald-900/70 text-emerald-300"
-                                                        : q.completed
-                                                        ? "bg-amber-900/70 text-amber-300"
-                                                        : "bg-slate-800 text-slate-300")
+                                        <span className="text-[10px] uppercase text-amber-300">{ai.difficulty}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="mb-6">
+                        <div className="flex items-center justify-between mb-2">
+                            <h3 className="text-[11px] font-semibold uppercase text-slate-300">Enemy settlements</h3>
+                            <span className="text-[10px] text-slate-500">{aiTargets.length} known</span>
+                        </div>
+                        <div className="space-y-3">
+                            {aiTargets.map((ai) => {
+                                const lootEstimate = RESOURCE_KEYS.reduce(
+                                    (sum, key) => sum + (ai.resources?.[key] || 0),
+                                    0
+                                );
+                                const cooldown = Math.max(0, (ai.raidCooldownUntil || 0) - now);
+                                return (
+                                    <div
+                                        key={ai.id}
+                                        className="bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-3 flex flex-col gap-2 shadow-sm"
+                                    >
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <div className="text-[10px] uppercase text-emerald-300 font-semibold">{ai.difficulty}</div>
+                                                <div className="text-sm font-semibold text-slate-100">{ai.name}</div>
+                                                <p className="text-[11px] text-slate-400">{ai.description}</p>
+                                            </div>
+                                            <div className="text-right text-[10px] text-slate-400">
+                                                Next attack
+                                                <div className="font-mono text-xs text-amber-300">
+                                                    {formatCountdown((ai.nextAttack || 0) - now)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="flex flex-wrap gap-3 text-[11px] text-slate-300">
+                                            <span>Defense {ai.defense}</span>
+                                            <span>Army {ai.army}</span>
+                                            <span>Loot {formatNum(lootEstimate)}</span>
+                                            <span>Distance {ai.distance || "?"}</span>
+                                        </div>
+                                        <div className="flex justify-end">
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    sendRaid({
+                                                        id: ai.id,
+                                                        name: ai.name,
+                                                        kind: "ai",
+                                                    })
                                                 }
+                                                disabled={cooldown > 0}
+                                                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-transform active:scale-95 ${
+                                                    cooldown > 0
+                                                        ? "bg-slate-800 text-slate-500"
+                                                        : "bg-red-600 hover:bg-red-700 text-white"
+                                                }`}
                                             >
-                                                {q.claimed
-                                                    ? "Claimed"
-                                                    : q.completed
-                                                    ? "Ready"
-                                                    : "In progress"}
-                                            </span>
-                                            {q.completed && !q.claimed && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => claimQuest(q.id)}
-                                                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-semibold px-2.5 py-1 rounded-md active:scale-95 transition-transform"
-                                                >
-                                                    Claim
-                                                </button>
-                                            )}
+                                                {cooldown > 0 ? `Scout ${formatCountdown(cooldown)}` : "Raid"}
+                                            </button>
                                         </div>
                                     </div>
-                                ))
-                            ) : (
-                                <div className="text-center text-slate-500 text-xs py-2">
-                                    No quests available right now.
+                                );
+                            })}
+                            {aiTargets.length === 0 && (
+                                <div className="text-center text-slate-500 text-xs py-3">
+                                    No hostile settlements discovered yet.
                                 </div>
                             )}
                         </div>
                     </div>
 
-                    <EventLog />
-                </div>
-            );
-
-            const MapView = () => {
-                const aiTargets = state.aiVillages || [];
-                const now = Date.now();
-                const incomingThreats = [...aiTargets]
-                    .filter((ai) => ai.nextAttack)
-                    .sort((a, b) => (a.nextAttack || 0) - (b.nextAttack || 0));
-                const stats = state.stats || calculateVillageStats(state);
-                const scoutingMitigation = Math.round(
-                    Math.min(0.5, (stats.scouting || 0) / 200) * 100
-                );
-
-                return (
-                    <div className="px-4 py-4 pb-24">
-                        <div className="text-center mb-4">
-                            <h2 className="text-lg font-semibold text-emerald-100">World Map</h2>
-                            <p className="text-[11px] text-slate-300">
-                                Scouts report nearby activity. Launch raids or prepare defenses.
-                            </p>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3 mb-5">
-                            <div className="bg-emerald-950/70 border border-emerald-800 rounded-xl px-3 py-3 text-left">
-                                <div className="text-[10px] uppercase text-emerald-300 tracking-wide">
-                                    Next threat
-                                </div>
-                                <div className="text-sm font-semibold text-emerald-100">
-                                    {incomingThreats[0]?.name || "Calm skies"}
-                                </div>
-                                <div className="text-[11px] text-slate-300">
-                                    {incomingThreats[0]?.nextAttack
-                                        ? formatCountdown(incomingThreats[0].nextAttack - now)
-                                        : "No movement spotted"}
-                                </div>
-                            </div>
-                            <div className="bg-slate-900/80 border border-slate-700 rounded-xl px-3 py-3 text-left">
-                                <div className="text-[10px] uppercase text-slate-400 tracking-wide">
-                                    Garrison ready
-                                </div>
-                                <div className="text-sm font-semibold text-slate-100">
-                                    {state.troops.legionnaire} Legionnaires
-                                </div>
-                                <div className="text-[11px] text-slate-400">
-                                    Defend the village or send raiding parties.
-                                </div>
-                            </div>
-                            <div className="bg-slate-950/70 border border-indigo-800 rounded-xl px-3 py-3 text-left col-span-2">
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <div className="text-[10px] uppercase text-indigo-300 tracking-wide">
-                                            Fortifications
-                                        </div>
-                                        <div className="flex items-center gap-1 text-sm font-semibold text-indigo-100">
-                                            <Icons.Shield /> Defense {stats.defense || 0}
+                    <div className="mb-6">
+                        <h3 className="text-[11px] font-semibold uppercase text-slate-300 mb-2">Neutral sites</h3>
+                        <div className="space-y-3">
+                            {NEUTRAL_TARGETS.map((site) => (
+                                <div
+                                    key={site.id}
+                                    className="bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-3 flex items-center justify-between"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className="text-2xl">{site.icon}</div>
+                                        <div>
+                                            <div className="text-sm font-semibold text-slate-100">{site.name}</div>
+                                            <p className="text-[11px] text-slate-400">{site.description}</p>
+                                            <div className="text-[10px] text-slate-500">
+                                                {site.difficulty} · Defense {site.defense}
+                                            </div>
                                         </div>
                                     </div>
-                                    <div className="text-right text-[10px] text-indigo-200">
-                                        Scouting reduces raids by ~{scoutingMitigation}%
-                                        <div className="flex items-center gap-1 justify-end text-xs text-slate-200">
-                                            <Icons.Eye /> {stats.scouting || 0}
-                                        </div>
-                                    </div>
-                                </div>
-                                <p className="text-[11px] text-slate-300 mt-1">
-                                    Prosperity trickle: ~{Math.floor(Math.max(0, stats.prosperity || 0) * 0.4)} resources/h
-                                </p>
-                            </div>
-                        </div>
-
-                        {state.missions.length > 0 && (
-                            <div className="mb-4 space-y-2">
-                                <h3 className="text-[11px] font-semibold uppercase text-slate-300">
-                                    Active Movements
-                                </h3>
-                                {state.missions.map((m, i) => {
-                                    const remaining = Math.max(0, m.returnTime - Date.now());
-                                    return (
-                                        <div
-                                            key={m.id || i}
-                                            className="bg-sky-950/70 border border-sky-700/70 px-3 py-2 rounded-lg flex justify-between items-center"
-                                        >
-                                            <div>
-                                                <div className="font-semibold text-xs text-sky-100">
-                                                    {m.type === "raid" ? "Raiding" : "Moving"}{" "}
-                                                    {m.targetName || m.target}
-                                                </div>
-                                                <div className="text-[11px] text-sky-300">
-                                                    {m.troops} troops · {m.targetKind || "unknown"}
-                                                </div>
-                                            </div>
-                                            <div className="text-[11px] font-mono bg-sky-900/80 px-2 py-1 rounded text-sky-100">
-                                                {formatCountdown(remaining)}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        )}
-
-                        {incomingThreats.length > 0 && (
-                            <div className="mb-5">
-                                <h3 className="text-[11px] font-semibold uppercase text-slate-300 mb-2">
-                                    Incoming threats
-                                </h3>
-                                <div className="space-y-2">
-                                    {incomingThreats.slice(0, 3).map((ai) => (
-                                        <div
-                                            key={ai.id}
-                                            className="bg-amber-950/40 border border-amber-700/60 rounded-lg px-3 py-2 flex justify-between items-center"
-                                        >
-                                            <div>
-                                                <div className="text-xs font-semibold text-amber-200">
-                                                    {ai.name}
-                                                </div>
-                                                <div className="text-[11px] text-amber-300">
-                                                    Attack in {formatCountdown((ai.nextAttack || 0) - now)}
-                                                </div>
-                                            </div>
-                                            <span className="text-[10px] uppercase text-amber-300">
-                                                {ai.difficulty}
-                                            </span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="mb-6">
-                            <div className="flex items-center justify-between mb-2">
-                                <h3 className="text-[11px] font-semibold uppercase text-slate-300">
-                                    Enemy settlements
-                                </h3>
-                                <span className="text-[10px] text-slate-500">
-                                    {aiTargets.length} known
-                                </span>
-                            </div>
-                            <div className="space-y-3">
-                                {aiTargets.map((ai) => {
-                                    const lootEstimate = RESOURCE_KEYS.reduce(
-                                        (sum, key) => sum + (ai.resources?.[key] || 0),
-                                        0
-                                    );
-                                    const cooldown = Math.max(0, (ai.raidCooldownUntil || 0) - now);
-                                    return (
-                                        <div
-                                            key={ai.id}
-                                            className="bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-3 flex flex-col gap-2 shadow-sm"
-                                        >
-                                            <div className="flex justify-between items-start">
-                                                <div>
-                                                    <div className="text-[10px] uppercase text-emerald-300 font-semibold">
-                                                        {ai.difficulty}
-                                                    </div>
-                                                    <div className="text-sm font-semibold text-slate-100">
-                                                        {ai.name}
-                                                    </div>
-                                                    <p className="text-[11px] text-slate-400">
-                                                        {ai.description}
-                                                    </p>
-                                                </div>
-                                                <div className="text-right text-[10px] text-slate-400">
-                                                    Next attack
-                                                    <div className="font-mono text-xs text-amber-300">
-                                                        {formatCountdown((ai.nextAttack || 0) - now)}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <div className="flex flex-wrap gap-3 text-[11px] text-slate-300">
-                                                <span>Defense {ai.defense}</span>
-                                                <span>Army {ai.army}</span>
-                                                <span>Loot {formatNum(lootEstimate)}</span>
-                                                <span>Distance {ai.distance || "?"}</span>
-                                            </div>
-                                            <div className="flex justify-end">
-                                                <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                        sendRaid({
-                                                            id: ai.id,
-                                                            name: ai.name,
-                                                            kind: "ai",
-                                                        })
-                                                    }
-                                                    disabled={cooldown > 0}
-                                                    className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-transform active:scale-95 ${
-                                                        cooldown > 0
-                                                            ? "bg-slate-800 text-slate-500"
-                                                            : "bg-red-600 hover:bg-red-700 text-white"
-                                                    }`}
-                                                >
-                                                    {cooldown > 0
-                                                        ? `Scout ${formatCountdown(cooldown)}`
-                                                        : "Raid"}
-                                                </button>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                                {aiTargets.length === 0 && (
-                                    <div className="text-center text-slate-500 text-xs py-3">
-                                        No hostile settlements discovered yet.
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="mb-6">
-                            <h3 className="text-[11px] font-semibold uppercase text-slate-300 mb-2">
-                                Neutral sites
-                            </h3>
-                            <div className="space-y-3">
-                                {NEUTRAL_TARGETS.map((site) => (
-                                    <div
-                                        key={site.id}
-                                        className="bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-3 flex items-center justify-between"
-                                    >
-                                        <div className="flex items-center gap-3">
-                                            <div className="text-2xl">{site.icon}</div>
-                                            <div>
-                                                <div className="text-sm font-semibold text-slate-100">
-                                                    {site.name}
-                                                </div>
-                                                <p className="text-[11px] text-slate-400">
-                                                    {site.description}
-                                                </p>
-                                                <div className="text-[10px] text-slate-500">
-                                                    {site.difficulty} · Defense {site.defense}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => sendRaid(site)}
-                                            className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-md text-xs font-semibold active:scale-95 transition-transform"
-                                        >
-                                            Raid
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-
-                        <div className="mt-5">
-                            <h3 className="text-[11px] font-semibold uppercase text-slate-300 mb-2">
-                                Latest Reports
-                            </h3>
-                            <div className="space-y-2">
-                                {state.reports.slice(0, 5).map((r) => (
-                                    <div
-                                        key={r.id}
-                                        className="bg-slate-900/80 border border-slate-700 px-3 py-2 rounded text-xs text-slate-100"
-                                    >
-                                        <div className="flex justify-between mb-1">
-                                            <span className="font-semibold">{r.title}</span>
-                                            <span className="text-[10px] text-slate-400">
-                                                {r.time}
-                                            </span>
-                                        </div>
-
-                                        {typeof r.troopsLost === "number" && (
-                                            <div className="text-[10px] text-red-300 mb-1">
-                                                Losses: {r.troopsLost}/{r.troopsSent} troops did not
-                                                return.
-                                            </div>
-                                        )}
-
-                                        <div className="flex gap-3 flex-wrap text-[11px] text-slate-200">
-                                            <span className="flex items-center gap-1">
-                                                <Icons.Wood /> {r.loot.wood}
-                                            </span>
-                                            <span className="flex items-center gap-1">
-                                                <Icons.Clay /> {r.loot.clay}
-                                            </span>
-                                            <span className="flex items-center gap-1">
-                                                <Icons.Iron /> {r.loot.iron}
-                                            </span>
-                                            <span className="flex items-center gap-1">
-                                                <Icons.Crop /> {r.loot.crop}
-                                            </span>
-                                        </div>
-                                    </div>
-                                ))}
-                                {state.reports.length === 0 && (
-                                    <div className="text-center text-slate-500 text-xs py-3">
-                                        No reports yet. Go annoy some bandits. 🙂
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                );
-            };
-
-            const BuildingModal = () => {
-                if (!modalOpen || !selectedSlot) return null;
-
-                const { isField, level, type, index } = selectedSlot;
-
-                // Empty village slot: choose building to construct
-                if (!type && !isField) {
-                    const buildableEntries = Object.entries(buildingTypes)
-                        .filter(([, info]) => info && info.type !== "resource")
-                        .sort(
-                            (a, b) => (a[1].order ?? 99) - (b[1].order ?? 99)
-                        );
-                    return (
-                        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60">
-                            <div className="bg-slate-950 w-full max-w-md px-4 py-4 rounded-t-2xl sm:rounded-2xl shadow-xl border border-slate-800">
-                                <div className="flex justify-between items-center mb-3">
-                                    <h3 className="text-sm font-semibold text-slate-50">
-                                        Construct Building
-                                    </h3>
                                     <button
                                         type="button"
-                                        onClick={() => setModalOpen(false)}
-                                        className="p-1 rounded-full hover:bg-slate-800"
+                                        onClick={() => sendRaid(site)}
+                                        className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-md text-xs font-semibold active:scale-95 transition-transform"
                                     >
-                                        <Icons.X />
+                                        Raid
                                     </button>
                                 </div>
-                                <div className="space-y-3">
-                                    {buildableEntries.map(([bKey, b]) => {
-                                        if (!b) return null;
-                                        const count = state.buildings.filter(
-                                            (building) => building.type === bKey && building.level > 0
-                                        ).length;
-                                        const costs = b.cost || [0, 0, 0, 0];
-                                        const isUnique = Boolean(b.unique);
-                                        const uniqueBuilt = isUnique && count > 0;
-                                        const canAfford =
-                                            state.resources.wood >= costs[0] &&
-                                            state.resources.clay >= costs[1] &&
-                                            state.resources.iron >= costs[2] &&
-                                            state.resources.crop >= costs[3];
-
-                                        return (
-                                            <div
-                                                key={bKey}
-                                                className="border border-slate-700 rounded-lg px-3 py-2.5 flex justify-between items-center bg-slate-900/80"
-                                            >
-                                                <div className="mr-2">
-                                                    <div className="flex items-center gap-2 mb-0.5">
-                                                        <div className="font-semibold text-xs text-slate-50">
-                                                            {b.name}
-                                                        </div>
-                                                        {isUnique && (
-                                                            <span className="text-[10px] text-emerald-300 uppercase">
-                                                                Unique
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                    <div className="text-[11px] text-slate-300 mb-1">
-                                                        {b.desc}
-                                                    </div>
-                                                    {b.effect && (
-                                                        <div className="text-[10px] text-emerald-300 mb-1">
-                                                            {b.effect}
-                                                        </div>
-                                                    )}
-                                                    <div className="flex gap-2 text-[10px] font-mono text-slate-200 flex-wrap">
-                                                        <span className="flex items-center gap-1">
-                                                            <Icons.Wood /> {costs[0]}
-                                                        </span>
-                                                        <span className="flex items-center gap-1">
-                                                            <Icons.Clay /> {costs[1]}
-                                                        </span>
-                                                        <span className="flex items-center gap-1">
-                                                            <Icons.Iron /> {costs[2]}
-                                                        </span>
-                                                        <span className="flex items-center gap-1">
-                                                            <Icons.Crop /> {costs[3]}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                                <button
-                                                    type="button"
-                                                    disabled={!canAfford || uniqueBuilt}
-                                                    onClick={() => {
-                                                        if (!canAfford || uniqueBuilt) return;
-                                                        setState((prev) => {
-                                                            if (
-                                                                prev.resources.wood < costs[0] ||
-                                                                prev.resources.clay < costs[1] ||
-                                                                prev.resources.iron < costs[2] ||
-                                                                prev.resources.crop < costs[3]
-                                                            ) {
-                                                                return prev;
-                                                            }
-                                                            const mainLevel = getMainBuildingLevel(
-                                                                prev.buildings
-                                                            );
-                                                            const baseTime = 10000;
-                                                            const timeFactor =
-                                                                1 - Math.min(0.4, mainLevel * 0.05);
-                                                            const buildTime =
-                                                                (baseTime * timeFactor) /
-                                                                SPEED_MULTIPLIER;
-
-                                                            return {
-                                                                ...prev,
-                                                                resources: {
-                                                                    wood:
-                                                                        prev.resources.wood - costs[0],
-                                                                    clay:
-                                                                        prev.resources.clay - costs[1],
-                                                                    iron:
-                                                                        prev.resources.iron - costs[2],
-                                                                    crop:
-                                                                        prev.resources.crop - costs[3],
-                                                                },
-                                                                constQueue: [
-                                                                    ...prev.constQueue,
-                                                                    {
-                                                                        type: bKey,
-                                                                        index,
-                                                                        level: 1,
-                                                                        finishTime:
-                                                                            Date.now() + buildTime,
-                                                                        isField: false,
-                                                                    },
-                                                                ],
-                                                            };
-                                                        });
-                                                        setModalOpen(false);
-                                                    }}
-                                                    className={`text-[11px] font-semibold px-3 py-1.5 rounded-md active:scale-95 transition-transform ${
-                                                        !canAfford || uniqueBuilt
-                                                            ? "bg-slate-700 text-slate-400 cursor-not-allowed opacity-60"
-                                                            : "bg-emerald-600 hover:bg-emerald-700 text-white"
-                                                    }`}
-                                                >
-                                                    {uniqueBuilt ? "Built" : "Build"}
-                                                </button>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
+                            ))}
                         </div>
-                    );
-                }
+                    </div>
 
-                const nextCost = getCost(type, level, buildingTypes);
-                const building = buildingTypes[type] || { name: type, desc: "" };
+                    <div className="mt-5">
+                        <h3 className="text-[11px] font-semibold uppercase text-slate-300 mb-2">Latest Reports</h3>
+                        <div className="space-y-2">
+                            {state.reports.slice(0, 5).map((r) => (
+                                <div
+                                    key={r.id}
+                                    className="bg-slate-900/80 border border-slate-700 px-3 py-2 rounded text-xs text-slate-100"
+                                >
+                                    <div className="flex justify-between mb-1">
+                                        <span className="font-semibold">{r.title}</span>
+                                        <span className="text-[10px] text-slate-400">{r.time}</span>
+                                    </div>
+
+                                    {typeof r.troopsLost === "number" && (
+                                        <div className="text-[10px] text-red-300 mb-1">
+                                            Losses: {r.troopsLost}/{r.troopsSent} troops did not return.
+                                        </div>
+                                    )}
+
+                                    <div className="flex gap-3 flex-wrap text-[11px] text-slate-200">
+                                        <span className="flex items-center gap-1">
+                                            <Icons.Wood /> {r.loot.wood}
+                                        </span>
+                                        <span className="flex items-center gap-1">
+                                            <Icons.Clay /> {r.loot.clay}
+                                        </span>
+                                        <span className="flex items-center gap-1">
+                                            <Icons.Iron /> {r.loot.iron}
+                                        </span>
+                                        <span className="flex items-center gap-1">
+                                            <Icons.Crop /> {r.loot.crop}
+                                        </span>
+                                    </div>
+                                </div>
+                            ))}
+                            {state.reports.length === 0 && (
+                                <div className="text-center text-slate-500 text-xs py-3">
+                                    No reports yet. Go annoy some bandits. 🙂
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const BuildingModal = ({
+            modalOpen,
+            selectedSlot,
+            state,
+            buildingTypes,
+            onClose,
+            trainInputRef,
+            trainError,
+            setTrainError,
+            onTrainTroops,
+            onUpgrade,
+            onConstructBuilding,
+        }) => {
+            if (!modalOpen || !selectedSlot) return null;
+
+            const { isField, level, type, index } = selectedSlot;
+
+            if (!type && !isField) {
+                const buildableEntries = Object.entries(buildingTypes)
+                    .filter(([, info]) => info && info.type !== "resource")
+                    .sort((a, b) => (a[1].order ?? 99) - (b[1].order ?? 99));
 
                 return (
                     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60">
                         <div className="bg-slate-950 w-full max-w-md px-4 py-4 rounded-t-2xl sm:rounded-2xl shadow-xl border border-slate-800">
                             <div className="flex justify-between items-center mb-3">
-                                <div>
-                                    <h3 className="text-sm font-semibold text-slate-50">
-                                        {building.name}{" "}
-                                        <span className="text-slate-400 text-[11px]">
-                                            Level {level}
-                                        </span>
-                                    </h3>
-                                    <p className="text-[11px] text-slate-300 mt-1">
-                                        {isField
-                                            ? `Production: ${getProduction(
-                                                  type,
-                                                  level,
-                                                  buildingTypes
-                                              )} → ${getProduction(
-                                                  type,
-                                                  level + 1,
-                                                  buildingTypes
-                                              )} per hour`
-                                            : building.desc}
-                                    </p>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => setModalOpen(false)}
-                                    className="p-1 rounded-full hover:bg-slate-800"
-                                >
+                                <h3 className="text-sm font-semibold text-slate-50">Construct Building</h3>
+                                <button type="button" onClick={onClose} className="p-1 rounded-full hover:bg-slate-800">
                                     <Icons.X />
                                 </button>
                             </div>
+                            <div className="space-y-3">
+                                {buildableEntries.map(([bKey, b]) => {
+                                    if (!b) return null;
+                                    const count = state.buildings.filter(
+                                        (building) => building.type === bKey && building.level > 0
+                                    ).length;
+                                    const costs = b.cost || [0, 0, 0, 0];
+                                    const isUnique = Boolean(b.unique);
+                                    const uniqueBuilt = isUnique && count > 0;
+                                    const canAfford =
+                                        state.resources.wood >= costs[0] &&
+                                        state.resources.clay >= costs[1] &&
+                                        state.resources.iron >= costs[2] &&
+                                        state.resources.crop >= costs[3];
 
-                            {type === "barracks" && level > 0 && (
-                                <div className="mb-4 bg-slate-900/80 border border-slate-700 px-3 py-3 rounded-lg">
-                                    <h4 className="font-semibold text-xs text-slate-50 mb-1.5">
-                                        Train Legionnaire
-                                    </h4>
-                                    <div className="flex justify-between items-center">
-                                        <div className="text-[11px] text-slate-200">
-                                            Cost: 120{" "}
-                                            <span className="inline-flex items-center">
-                                                <Icons.Wood />
-                                            </span>{" "}
-                                            100{" "}
-                                            <span className="inline-flex items-center">
-                                                <Icons.Clay />
-                                            </span>{" "}
-                                            150{" "}
-                                            <span className="inline-flex items-center">
-                                                <Icons.Iron />
-                                            </span>{" "}
-                                            30{" "}
-                                            <span className="inline-flex items-center">
-                                                <Icons.Crop />
-                                            </span>
-                                        </div>
-                                                                                <div className="flex items-center gap-2">
-                                            <input
-                                                type="number"
-                                                min="1"
-                                                defaultValue={5}
-                                                ref={trainInputRef}
-                                                className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs w-16 text-right"
-                                            />
+                                    return (
+                                        <div
+                                            key={bKey}
+                                            className="border border-slate-700 rounded-lg px-3 py-2.5 flex justify-between items-center bg-slate-900/80"
+                                        >
+                                            <div className="mr-2">
+                                                <div className="flex items-center gap-2 mb-0.5">
+                                                    <div className="font-semibold text-xs text-slate-50">{b.name}</div>
+                                                    {isUnique && (
+                                                        <span className="text-[10px] text-emerald-300 uppercase">Unique</span>
+                                                    )}
+                                                </div>
+                                                <div className="text-[11px] text-slate-300 mb-1">{b.desc}</div>
+                                                {b.effect && (
+                                                    <div className="text-[10px] text-emerald-300 mb-1">{b.effect}</div>
+                                                )}
+                                                <div className="flex gap-2 text-[10px] font-mono text-slate-200 flex-wrap">
+                                                    <span className="flex items-center gap-1">
+                                                        <Icons.Wood /> {costs[0]}
+                                                    </span>
+                                                    <span className="flex items-center gap-1">
+                                                        <Icons.Clay /> {costs[1]}
+                                                    </span>
+                                                    <span className="flex items-center gap-1">
+                                                        <Icons.Iron /> {costs[2]}
+                                                    </span>
+                                                    <span className="flex items-center gap-1">
+                                                        <Icons.Crop /> {costs[3]}
+                                                    </span>
+                                                </div>
+                                            </div>
                                             <button
                                                 type="button"
+                                                disabled={!canAfford || uniqueBuilt}
                                                 onClick={() => {
-                                                    const raw = trainInputRef.current?.value ?? "0";
-                                                    const amt = parseInt(raw, 10);
-                                                    if (!amt || amt <= 0) {
-                                                        setTrainError("Enter a positive amount.");
-                                                        return;
-                                                    }
-                                                    const success = trainTroops(amt);
-                                                    if (success === false) {
-                                                        setTrainError("Not enough resources.");
-                                                    } else {
-                                                        setTrainError("");
-                                                    }
+                                                    if (!canAfford || uniqueBuilt) return;
+                                                    onConstructBuilding(bKey, costs, index);
                                                 }}
-                                                className="bg-slate-800 hover:bg-slate-700 text-white px-3 py-1.5 rounded text-[11px] font-semibold active:scale-95 transition-transform"
+                                                className={`text-[11px] font-semibold px-3 py-1.5 rounded-md active:scale-95 transition-transform ${
+                                                    !canAfford || uniqueBuilt
+                                                        ? "bg-slate-700 text-slate-400 cursor-not-allowed opacity-60"
+                                                        : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                                                }`}
                                             >
-                                                Train
+                                                {uniqueBuilt ? "Built" : "Build"}
                                             </button>
                                         </div>
-                                        {trainError && (
-                                            <div className="text-[10px] text-red-400 mt-1">
-                                                {trainError}
-                                            </div>
-                                        )}
-
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="bg-slate-900/80 border border-slate-700 px-3 py-3 rounded-lg mb-1">
-                                <h4 className="font-semibold text-xs text-slate-50 mb-2">
-                                    Upgrade to Level {level + 1}
-                                </h4>
-                                <div className="grid grid-cols-4 gap-2 mb-3">
-                                    <div
-                                        className={`text-center ${
-                                            state.resources.wood < nextCost[0]
-                                                ? "text-red-400"
-                                                : "text-slate-100"
-                                        } text-[11px]`}
-                                    >
-                                        <div className="flex justify-center mb-0.5">
-                                            <Icons.Wood />
-                                        </div>
-                                        <span className="font-mono font-semibold">
-                                            {nextCost[0]}
-                                        </span>
-                                    </div>
-                                    <div
-                                        className={`text-center ${
-                                            state.resources.clay < nextCost[1]
-                                                ? "text-red-400"
-                                                : "text-slate-100"
-                                        } text-[11px]`}
-                                    >
-                                        <div className="flex justify-center mb-0.5">
-                                            <Icons.Clay />
-                                        </div>
-                                        <span className="font-mono font-semibold">
-                                            {nextCost[1]}
-                                        </span>
-                                    </div>
-                                    <div
-                                        className={`text-center ${
-                                            state.resources.iron < nextCost[2]
-                                                ? "text-red-400"
-                                                : "text-slate-100"
-                                        } text-[11px]`}
-                                    >
-                                        <div className="flex justify-center mb-0.5">
-                                            <Icons.Iron />
-                                        </div>
-                                        <span className="font-mono font-semibold">
-                                            {nextCost[2]}
-                                        </span>
-                                    </div>
-                                    <div
-                                        className={`text-center ${
-                                            state.resources.crop < nextCost[3]
-                                                ? "text-red-400"
-                                                : "text-slate-100"
-                                        } text-[11px]`}
-                                    >
-                                        <div className="flex justify-center mb-0.5">
-                                            <Icons.Crop />
-                                        </div>
-                                        <span className="font-mono font-semibold">
-                                            {nextCost[3]}
-                                        </span>
-                                    </div>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => upgradeBuilding(type)}
-                                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-lg text-xs font-semibold active:scale-95 transition-transform"
-                                >
-                                    Upgrade ({10 / SPEED_MULTIPLIER}s)
-                                </button>
+                                    );
+                                })}
                             </div>
                         </div>
                     </div>
                 );
-            };
+            }
 
-            const BottomNav = () => (
-                <nav className="safe-bottom bg-slate-950/95 border-t border-slate-800 flex justify-around py-2.5 px-2">
-                    <button
-                        type="button"
-                        onClick={() => setActiveTab("fields")}
-                        className={`flex flex-col items-center gap-0.5 flex-1 ${
-                            activeTab === "fields" ? "text-emerald-400" : "text-slate-400"
-                        }`}
-                    >
-                        <Icons.Crop />
-                        <span className="text-[10px] font-semibold uppercase tracking-wide">
-                            Fields
-                        </span>
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setActiveTab("village")}
-                        className={`flex flex-col items-center gap-0.5 flex-1 ${
-                            activeTab === "village" ? "text-emerald-400" : "text-slate-400"
-                        }`}
-                    >
-                        <Icons.Home />
-                        <span className="text-[10px] font-semibold uppercase tracking-wide">
-                            Village
-                        </span>
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setActiveTab("map")}
-                        className={`flex flex-col items-center gap-0.5 flex-1 ${
-                            activeTab === "map" ? "text-emerald-400" : "text-slate-400"
-                        }`}
-                    >
-                        <Icons.Map />
-                        <span className="text-[10px] font-semibold uppercase tracking-wide">
-                            Map
-                        </span>
-                    </button>
-                </nav>
-            );
+            const nextCost = getCost(type, level, buildingTypes);
+            const building = buildingTypes[type] || { name: type, desc: "" };
 
             return (
-                <div className="w-full h-full bg-gradient-to-b from-emerald-900 via-emerald-950 to-slate-950 flex items-stretch justify-center">
-                    <div className="w-full max-w-md h-full bg-slate-950/95 text-slate-100 shadow-[0_0_40px_rgba(0,0,0,0.8)] flex flex-col">
-                        <TopBar />
-                        <ResourceBar />
-                        <WeatherPanel />
+                <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60">
+                    <div className="bg-slate-950 w-full max-w-md px-4 py-4 rounded-t-2xl sm:rounded-2xl shadow-xl border border-slate-800">
+                        <div className="flex justify-between items-center mb-3">
+                            <div>
+                                <h3 className="text-sm font-semibold text-slate-50">
+                                    {building.name}{" "}
+                                    <span className="text-slate-400 text-[11px]">Level {level}</span>
+                                </h3>
+                                <p className="text-[11px] text-slate-300 mt-1">
+                                    {isField
+                                        ? `Production: ${getProduction(type, level, buildingTypes)} → ${getProduction(
+                                              type,
+                                              level + 1,
+                                              buildingTypes
+                                          )} per hour`
+                                        : building.desc}
+                                </p>
+                            </div>
+                            <button type="button" onClick={onClose} className="p-1 rounded-full hover:bg-slate-800">
+                                <Icons.X />
+                            </button>
+                        </div>
 
-                        <main className="flex-1 overflow-y-auto overflow-x-hidden game-scroll">
-                            {activeTab === "fields" && <FieldsView />}
-                            {activeTab === "village" && <VillageView />}
-                            {activeTab === "map" && <MapView />}
-                        </main>
+                        {type === "barracks" && level > 0 && (
+                            <div className="mb-4 bg-slate-900/80 border border-slate-700 px-3 py-3 rounded-lg">
+                                <h4 className="font-semibold text-xs text-slate-50 mb-1.5">Train Legionnaire</h4>
+                                <div className="flex justify-between items-center">
+                                    <div className="text-[11px] text-slate-200">
+                                        Cost: 120 <span className="inline-flex items-center"><Icons.Wood /></span> 100 <span className="inline-flex items-center"><Icons.Clay /></span>
+                                        150 <span className="inline-flex items-center"><Icons.Iron /></span> 30 <span className="inline-flex items-center"><Icons.Crop /></span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            defaultValue={5}
+                                            ref={trainInputRef}
+                                            className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs w-16 text-right"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const raw = trainInputRef.current?.value ?? "0";
+                                                const amt = parseInt(raw, 10);
+                                                if (!amt || amt <= 0) {
+                                                    setTrainError("Enter a positive amount.");
+                                                    return;
+                                                }
+                                                const success = onTrainTroops(amt);
+                                                if (success === false) {
+                                                    setTrainError("Not enough resources.");
+                                                } else {
+                                                    setTrainError("");
+                                                }
+                                            }}
+                                            className="bg-slate-800 hover:bg-slate-700 text-white px-3 py-1.5 rounded text-[11px] font-semibold active:scale-95 transition-transform"
+                                        >
+                                            Train
+                                        </button>
+                                    </div>
+                                </div>
+                                {trainError && <div className="text-[10px] text-red-400 mt-1">{trainError}</div>}
+                            </div>
+                        )}
 
-                        <BottomNav />
-                        <BuildingModal />
+                        <div className="bg-slate-900/80 border border-slate-700 px-3 py-3 rounded-lg mb-1">
+                            <h4 className="font-semibold text-xs text-slate-50 mb-2">
+                                Upgrade to Level {level + 1}
+                            </h4>
+                            <div className="grid grid-cols-4 gap-2 mb-3">
+                                <div
+                                    className={`text-center ${
+                                        state.resources.wood < nextCost[0] ? "text-red-400" : "text-slate-100"
+                                    } text-[11px]`}
+                                >
+                                    <div className="flex justify-center mb-0.5">
+                                        <Icons.Wood />
+                                    </div>
+                                    <span className="font-mono font-semibold">{nextCost[0]}</span>
+                                </div>
+                                <div
+                                    className={`text-center ${
+                                        state.resources.clay < nextCost[1] ? "text-red-400" : "text-slate-100"
+                                    } text-[11px]`}
+                                >
+                                    <div className="flex justify-center mb-0.5">
+                                        <Icons.Clay />
+                                    </div>
+                                    <span className="font-mono font-semibold">{nextCost[1]}</span>
+                                </div>
+                                <div
+                                    className={`text-center ${
+                                        state.resources.iron < nextCost[2] ? "text-red-400" : "text-slate-100"
+                                    } text-[11px]`}
+                                >
+                                    <div className="flex justify-center mb-0.5">
+                                        <Icons.Iron />
+                                    </div>
+                                    <span className="font-mono font-semibold">{nextCost[2]}</span>
+                                </div>
+                                <div
+                                    className={`text-center ${
+                                        state.resources.crop < nextCost[3] ? "text-red-400" : "text-slate-100"
+                                    } text-[11px]`}
+                                >
+                                    <div className="flex justify-center mb-0.5">
+                                        <Icons.Crop />
+                                    </div>
+                                    <span className="font-mono font-semibold">{nextCost[3]}</span>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => onUpgrade(type)}
+                                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-lg text-xs font-semibold active:scale-95 transition-transform"
+                            >
+                                Upgrade ({10 / SPEED_MULTIPLIER}s)
+                            </button>
+                        </div>
                     </div>
                 </div>
             );
-        }
+        };
+
+        const BottomNav = ({ activeTab, setActiveTab }) => (
+            <nav className="safe-bottom bg-slate-950/95 border-t border-slate-800 flex justify-around py-2.5 px-2">
+                <button
+                    type="button"
+                    onClick={() => setActiveTab("fields")}
+                    className={`flex flex-col items-center gap-0.5 flex-1 ${
+                        activeTab === "fields" ? "text-emerald-400" : "text-slate-400"
+                    }`}
+                >
+                    <Icons.Crop />
+                    <span className="text-[10px] font-semibold uppercase tracking-wide">Fields</span>
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveTab("village")}
+                    className={`flex flex-col items-center gap-0.5 flex-1 ${
+                        activeTab === "village" ? "text-emerald-400" : "text-slate-400"
+                    }`}
+                >
+                    <Icons.Home />
+                    <span className="text-[10px] font-semibold uppercase tracking-wide">Village</span>
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveTab("map")}
+                    className={`flex flex-col items-center gap-0.5 flex-1 ${
+                        activeTab === "map" ? "text-emerald-400" : "text-slate-400"
+                    }`}
+                >
+                    <Icons.Map />
+                    <span className="text-[10px] font-semibold uppercase tracking-wide">Map</span>
+                </button>
+            </nav>
+        );
 
         const root = ReactDOM.createRoot(document.getElementById("root"));
         root.render(<App />);
