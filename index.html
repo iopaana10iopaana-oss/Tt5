@@ -1,0 +1,2816 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Civitas - Strategy Game</title>
+    <!-- Mobile friendly viewport -->
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
+    />
+
+    <!-- Tailwind + React + Babel -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+        }
+
+        body {
+            -webkit-font-smoothing: antialiased;
+            text-rendering: optimizeLegibility;
+            background: #020617; /* slate-950 */
+        }
+
+        #root {
+            height: 100%;
+        }
+
+        /* Custom scrollbar (for the in-game scroll area only) */
+        .game-scroll::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        .game-scroll::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.7);
+        }
+
+        .game-scroll::-webkit-scrollbar-thumb {
+            background: #64748b;
+            border-radius: 3px;
+        }
+
+        .pixel-font {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+                "Courier New", monospace;
+        }
+
+        /* Safe-area helpers for iOS notches */
+        :root {
+            --safe-top: env(safe-area-inset-top, 0px);
+            --safe-bottom: env(safe-area-inset-bottom, 0px);
+        }
+
+        .safe-top {
+            padding-top: var(--safe-top);
+        }
+
+        .safe-bottom {
+            padding-bottom: var(--safe-bottom);
+        }
+
+        /* Animation for resources update (unused but ready) */
+        @keyframes pop {
+            0% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.12);
+            }
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        .res-pop {
+            animation: pop 0.2s ease-in-out;
+        }
+
+        /* Remove tap highlight on mobile */
+        * {
+            -webkit-tap-highlight-color: transparent;
+        }
+    </style>
+
+</head>
+<body class="select-none">
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Icons (simple inline SVGs)
+        const Icons = {
+            Wood: () => (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-amber-500"
+                >
+                    <path d="M12 10a6 6 0 0 0-6-6c-2 0-4 1-4 6 0 4 2 6 5 8 4 3 8 4 8 4s5-1 8-4c3-2 5-4 5-8 0-5-2-6-4-6-4 0-6 6-6 6Z" />
+                    <path d="M8 14v8" />
+                    <path d="M16 14v8" />
+                    <path d="M12 14v8" />
+                </svg>
+            ),
+            Clay: () => (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-orange-600"
+                >
+                    <rect width="18" height="18" x="3" y="3" rx="2" />
+                    <path d="M3 9h18" />
+                    <path d="M3 15h18" />
+                    <path d="M9 3v18" />
+                    <path d="M15 3v18" />
+                </svg>
+            ),
+            Iron: () => (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-slate-300"
+                >
+                    <path d="m2 22 1-1h3l9-9" />
+                    <path d="M3 21v-3l9-9" />
+                    <path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L5 21l-3 1 1-3L19 3a2 1 2 1 0 0 1 3 3l-7 7" />
+                </svg>
+            ),
+            Crop: () => (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-yellow-400"
+                >
+                    <path
+                        d="M12 22a4.5 4.5 0 0 0 1.3-3.2c0-4.6-4-6.3-3.6-11.6 1.6-1.5 3.4-1.1 4.6-1.1.4 3.6 2.7 5.7 4 8.9.6 2.5-.3 6.9-2 8.3"
+                    />
+                </svg>
+            ),
+            Sword: () => (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                >
+                    <polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5" />
+                    <line x1="13" x2="19" y1="19" y2="13" />
+                    <line x1="16" x2="20" y1="16" y2="20" />
+                    <line x1="19" x2="21" y1="21" y2="19" />
+                </svg>
+            ),
+            Home: () => (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="22"
+                    height="22"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                >
+                    <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                    <polyline points="9 22 9 12 15 12 15 22" />
+                </svg>
+            ),
+            Map: () => (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="22"
+                    height="22"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                >
+                    <polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21" />
+                    <line x1="9" x2="9" y1="3" y2="18" />
+                    <line x1="15" x2="15" y1="6" y2="21" />
+                </svg>
+            ),
+            Timer: () => (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                >
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
+                </svg>
+            ),
+            Shield: () => (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                >
+                    <path d="M12 2 4 5v6c0 5 3.5 9.2 8 11 4.5-1.8 8-6 8-11V5Z" />
+                    <path d="M12 2v20" />
+                </svg>
+            ),
+            Eye: () => (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                >
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" />
+                    <circle cx="12" cy="12" r="3" />
+                </svg>
+            ),
+            Coin: () => (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                >
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7v10" />
+                    <path d="M9 9h6" />
+                    <path d="M9 15h6" />
+                </svg>
+            ),
+            Book: () => (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                >
+                    <path d="M4 19.5V5a2 2 0 0 1 2-2h5" />
+                    <path d="M20 19.5V5a2 2 0 0 0-2-2h-5" />
+                    <path d="M12 22V3" />
+                </svg>
+            ),
+            X: () => (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                >
+                    <path d="M18 6 6 18" />
+                    <path d="m6 6 12 12" />
+                </svg>
+            ),
+        };
+
+        // Game Constants
+        const TICK_RATE = 1000; // 1 second ticks
+        const SAVE_KEY = "civitas_save_v1";
+        const SPEED_MULTIPLIER = 5; // Speed server!
+        const DATA_PATH = "./civitas-data/game-config.json";
+
+        const WEATHER_CHANGE_INTERVAL = 3 * 60 * 1000; // 3 minutes
+
+        const COUNCIL_BOOST = {
+            duration: 2 * 60 * 1000,
+            cooldown: 10 * 60 * 1000,
+            multiplier: 1.25,
+        };
+
+        const MAX_EVENTS = 8;
+        const AI_RAID_COOLDOWN = 60 * 1000;
+        const DEFAULT_AI_ATTACK_INTERVAL = [3 * 60 * 1000, 5 * 60 * 1000];
+        const DEFAULT_AI_ATTACK_FORCE = [5, 12];
+        const DEFAULT_AI_REGEN = { wood: 3, clay: 3, iron: 2, crop: 2 };
+        const DEFAULT_AI_STOCKPILE = { wood: 400, clay: 350, iron: 320, crop: 350 };
+        const MIN_RAID_TRAVEL_TIME = 8000;
+        const RESOURCE_KEYS = ["wood", "clay", "iron", "crop"];
+
+        const NEUTRAL_TARGETS = [
+            {
+                id: "rat-cave",
+                kind: "neutral",
+                name: "Rat Cave",
+                description: "A nuisance den clutching stolen crumbs.",
+                difficulty: "Trivial",
+                defense: 4,
+                lootRange: [40, 120],
+                travelTime: 15000,
+                icon: "🐀",
+            },
+            {
+                id: "abandoned-valley",
+                kind: "neutral",
+                name: "Abandoned Valley",
+                description: "Empty huts brimming with forgotten supplies.",
+                difficulty: "Easy",
+                defense: 8,
+                lootRange: [80, 180],
+                travelTime: 20000,
+                icon: "🏚️",
+            },
+            {
+                id: "oasis-caravan",
+                kind: "neutral",
+                name: "Oasis Caravan",
+                description: "Merchants resting with overstocked wagons.",
+                difficulty: "Moderate",
+                defense: 12,
+                lootRange: [120, 240],
+                travelTime: 24000,
+                icon: "🏜️",
+            },
+        ];
+
+        const createDefaultFieldsLayout = () =>
+            Array(18)
+                .fill(null)
+                .map((_, i) => {
+                    if (i < 4) return "woodcutter";
+                    if (i < 8) return "claypit";
+                    if (i < 12) return "ironmine";
+                    return "cropland";
+                });
+
+        const cloneResources = (seed = {}) => ({
+            wood: Math.max(0, Math.floor(seed.wood || 0)),
+            clay: Math.max(0, Math.floor(seed.clay || 0)),
+            iron: Math.max(0, Math.floor(seed.iron || 0)),
+            crop: Math.max(0, Math.floor(seed.crop || 0)),
+        });
+
+        const randomBetween = (min = 0, max = 0) => {
+            if (typeof min !== "number") min = 0;
+            if (typeof max !== "number") max = min;
+            if (max <= min) return Math.floor(min);
+            return Math.floor(Math.random() * (max - min + 1)) + Math.floor(min);
+        };
+
+        const buildAiVillagesFromConfig = (data, savedVillages = []) => {
+            const templates = (data && data.aiOpponents) || [];
+            const now = Date.now();
+            const savedById = {};
+            (savedVillages || []).forEach((vill) => {
+                if (vill && vill.id) savedById[vill.id] = vill;
+            });
+
+            return templates.map((template, idx) => {
+                const id = template.id || `ai-${idx}`;
+                const saved = savedById[id];
+                const attackInterval =
+                    template.attackInterval ||
+                    saved?.attackInterval ||
+                    DEFAULT_AI_ATTACK_INTERVAL;
+                const attackForceRange =
+                    template.attackForce ||
+                    saved?.attackForceRange ||
+                    DEFAULT_AI_ATTACK_FORCE;
+                const baseStockpile = cloneResources(
+                    template.stockpile || template.loot || DEFAULT_AI_STOCKPILE
+                );
+                const maxResources = cloneResources(
+                    template.maxResources || saved?.maxResources || baseStockpile
+                );
+                const resources = cloneResources(saved?.resources || baseStockpile);
+                const regen = template.regen || saved?.regen || DEFAULT_AI_REGEN;
+
+                return {
+                    id,
+                    kind: "ai",
+                    name: template.name || saved?.name || `Opponent ${idx + 1}`,
+                    description: template.description || saved?.description || "",
+                    difficulty: template.difficulty || saved?.difficulty || "Unknown",
+                    army: saved?.army ?? template.army ?? 12,
+                    defense: saved?.defense ?? template.defense ?? template.army ?? 12,
+                    distance: template.distance || saved?.distance || 10,
+                    travelTime: template.travelTime || saved?.travelTime || 22000,
+                    attackInterval,
+                    attackForceRange,
+                    resources,
+                    maxResources,
+                    regen,
+                    loot: cloneResources(template.loot || saved?.loot || baseStockpile),
+                    nextAttack:
+                        saved?.nextAttack ||
+                        now + randomBetween(attackInterval[0], attackInterval[1]),
+                    lastRaid: saved?.lastRaid || 0,
+                    raidCooldownUntil: saved?.raidCooldownUntil || 0,
+                    personality:
+                        template.personality || saved?.personality || "Unpredictable",
+                };
+            });
+        };
+
+        const mergeAiVillages = (savedVillages = [], baseVillages = []) => {
+            if (!savedVillages.length) return baseVillages;
+            const baseById = {};
+            baseVillages.forEach((vill) => {
+                if (vill?.id) baseById[vill.id] = vill;
+            });
+
+            const merged = savedVillages.map((vill, idx) => {
+                const base = (vill && baseById[vill.id]) || baseVillages[idx];
+                const fallback = base || baseVillages[0];
+                return {
+                    ...fallback,
+                    ...vill,
+                    kind: "ai",
+                    resources: cloneResources(vill?.resources || fallback?.resources),
+                    maxResources: cloneResources(
+                        vill?.maxResources || fallback?.maxResources
+                    ),
+                    attackInterval:
+                        vill?.attackInterval || fallback?.attackInterval || DEFAULT_AI_ATTACK_INTERVAL,
+                    attackForceRange:
+                        vill?.attackForceRange || fallback?.attackForceRange || DEFAULT_AI_ATTACK_FORCE,
+                    regen: vill?.regen || fallback?.regen || DEFAULT_AI_REGEN,
+                };
+            });
+
+            const known = new Set(merged.map((vill) => vill.id));
+            baseVillages.forEach((vill) => {
+                if (vill && !known.has(vill.id)) merged.push(vill);
+            });
+
+            return merged;
+        };
+
+        const createInitialState = (data) => {
+            const template = (data && data.initialState) || {};
+            const layout =
+                template.fieldsLayout && template.fieldsLayout.length === 18
+                    ? template.fieldsLayout
+                    : createDefaultFieldsLayout();
+            const fields = layout.map((type, index) => ({
+                type: type || "cropland",
+                level: 0,
+                id: `field-${index}`,
+            }));
+
+            const baseState = {
+                resources:
+                    template.resources ||
+                    { wood: 750, clay: 750, iron: 750, crop: 750 },
+                maxStorage: template.maxStorage ?? 800,
+                maxGranary: template.maxGranary ?? 800,
+                population: template.population ?? 1,
+                weatherIndex: template.weatherIndex ?? 0,
+                nextWeatherChange: Date.now() + WEATHER_CHANGE_INTERVAL,
+                productionFocus: template.productionFocus || "balanced",
+                council:
+                    template.council || { activeUntil: 0, cooldownUntil: 0 },
+                events: template.events || [],
+                fields,
+                buildings:
+                    template.buildings ||
+                    [
+                        { type: "mainbuilding", level: 1, id: "mb1" },
+                        { type: null, level: 0, id: "b2" },
+                        { type: null, level: 0, id: "b3" },
+                        { type: null, level: 0, id: "b4" },
+                        { type: null, level: 0, id: "b5" },
+                        { type: null, level: 0, id: "b6" },
+                        { type: null, level: 0, id: "b7" },
+                        { type: null, level: 0, id: "b8" },
+                    ],
+                constQueue: template.constQueue || [],
+                troops: template.troops || { legionnaire: 0 },
+                trainingQueue: template.trainingQueue || [],
+                missions: template.missions || [],
+                reports: template.reports || [],
+                quests: template.quests || [],
+                aiVillages: buildAiVillagesFromConfig(data, template.aiVillages),
+            };
+
+            baseState.stats = template.stats || calculateVillageStats(baseState);
+            return baseState;
+        };
+
+        const mergeStateWithDefaults = (saved, base) => {
+            if (!saved) return base;
+            const merged = {
+                ...base,
+                ...saved,
+                quests: saved.quests || base.quests,
+                events: saved.events || base.events,
+                productionFocus: saved.productionFocus || base.productionFocus,
+                council: saved.council || base.council,
+                weatherIndex:
+                    typeof saved.weatherIndex === "number"
+                        ? saved.weatherIndex
+                        : base.weatherIndex,
+                nextWeatherChange:
+                    saved.nextWeatherChange || base.nextWeatherChange,
+                fields: saved.fields || base.fields,
+                buildings: saved.buildings || base.buildings,
+                constQueue: saved.constQueue || base.constQueue,
+                troops: saved.troops || base.troops,
+                trainingQueue: saved.trainingQueue || base.trainingQueue,
+                missions: saved.missions || base.missions,
+                reports: saved.reports || base.reports,
+                aiVillages: mergeAiVillages(
+                    saved.aiVillages || [],
+                    base.aiVillages || []
+                ),
+            };
+            merged.stats = saved.stats || calculateVillageStats(merged);
+            return merged;
+        };
+
+        const pushEvent = (events = [], message, type = "general") => {
+            const entry = {
+                id: Date.now() + Math.random(),
+                message,
+                type,
+                time: new Date().toLocaleTimeString(),
+            };
+            return [entry, ...events].slice(0, MAX_EVENTS);
+        };
+
+        const formatCountdown = (ms) => {
+            if (!ms || ms <= 0) return "Soon";
+            const totalSeconds = Math.floor(ms / 1000);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            if (minutes > 0) return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+            return `${seconds}s`;
+        };
+
+        const formatTimeToCap = (hours) => {
+            if (!isFinite(hours) || hours <= 0) return "Stable";
+            if (hours < 1 / 60) return "<1m";
+            if (hours < 1) return `${Math.ceil(hours * 60)}m`;
+            return `${hours.toFixed(1)}h`;
+        };
+
+        const formatNum = (n) => Math.floor(n).toLocaleString();
+
+        const getCost = (type, level, buildingTypes = {}) => {
+            const building = buildingTypes[type];
+            if (!building) return [0, 0, 0, 0];
+            const base = building.cost;
+            const mult = Math.pow(1.5, level);
+            return base.map((c) => Math.floor(c * mult));
+        };
+
+        const getProduction = (type, level, buildingTypes = {}) => {
+            if (level === 0) return 2 * SPEED_MULTIPLIER;
+            const building = buildingTypes[type];
+            if (!building) return 0;
+            return Math.floor(building.prod * level * 1.5 * SPEED_MULTIPLIER);
+        };
+
+        const calculateHourlyProduction = (state, data, now = Date.now()) => {
+            const totals = { wood: 0, clay: 0, iron: 0, crop: 0 };
+            if (!state || !state.fields) return totals;
+
+            const buildingTypes = (data && data.buildingTypes) || {};
+
+            state.fields.forEach((f) => {
+                const resType = buildingTypes[f.type]?.resType;
+                if (!resType) return;
+                if (f.level > 0) {
+                    totals[resType] += getProduction(
+                        f.type,
+                        f.level,
+                        buildingTypes
+                    );
+                } else {
+                    totals[resType] += 2 * SPEED_MULTIPLIER;
+                }
+            });
+
+            const weatherIndex =
+                typeof state.weatherIndex === "number" ? state.weatherIndex : 0;
+            const patterns = (data && data.weatherPatterns) || [];
+            const weather =
+                patterns[weatherIndex] || patterns[0] || {
+                    modifiers: { wood: 1, clay: 1, iron: 1, crop: 1 },
+                };
+            const focusKey = state.productionFocus || "balanced";
+            const focusOptions = (data && data.focusOptions) || {};
+            const focus =
+                focusOptions[focusKey] ||
+                focusOptions.balanced || {
+                    modifiers: { wood: 1, clay: 1, iron: 1, crop: 1 },
+                };
+            const councilActive = state.council && state.council.activeUntil > now;
+            const councilMultiplier = councilActive ? COUNCIL_BOOST.multiplier : 1;
+
+            Object.keys(totals).forEach((key) => {
+                totals[key] =
+                    totals[key] *
+                    (weather.modifiers?.[key] || 1) *
+                    (focus.modifiers?.[key] || 1) *
+                    councilMultiplier;
+            });
+
+            return totals;
+        };
+
+        const runGameTick = (prev, gameData) => {
+            if (!prev) return prev;
+            const now = Date.now();
+            const next = { ...prev };
+
+            next.events = next.events || [];
+            next.council = next.council || { activeUntil: 0, cooldownUntil: 0 };
+            if (typeof next.weatherIndex !== "number") next.weatherIndex = 0;
+            if (!next.nextWeatherChange)
+                next.nextWeatherChange = now + WEATHER_CHANGE_INTERVAL;
+            next.resources =
+                next.resources || { wood: 0, clay: 0, iron: 0, crop: 0 };
+            next.maxStorage = next.maxStorage || 0;
+            next.maxGranary = next.maxGranary || 0;
+            next.fields = next.fields || [];
+            next.buildings = next.buildings || [];
+            next.constQueue = next.constQueue || [];
+            next.trainingQueue = next.trainingQueue || [];
+            next.missions = next.missions || [];
+            next.reports = next.reports || [];
+            next.quests = next.quests || [];
+            next.troops = next.troops || { legionnaire: 0 };
+            next.aiVillages = next.aiVillages || [];
+            if (!next.aiVillages.length) {
+                next.aiVillages = buildAiVillagesFromConfig(gameData);
+            }
+
+            const weatherPatterns = (gameData && gameData.weatherPatterns) || [];
+
+            if (next.nextWeatherChange <= now && weatherPatterns.length) {
+                const newIndex = Math.floor(Math.random() * weatherPatterns.length);
+                next.weatherIndex = newIndex;
+                next.nextWeatherChange = now + WEATHER_CHANGE_INTERVAL;
+                const weatherName = weatherPatterns[newIndex]?.name;
+                if (weatherName) {
+                    next.events = pushEvent(
+                        next.events,
+                        `Weather shifted to ${weatherName}.`,
+                        "weather"
+                    );
+                }
+            }
+
+            const prod = calculateHourlyProduction(next, gameData, now);
+
+            const troopUpkeep = next.troops.legionnaire || 0;
+            const popUpkeep = next.population || 0;
+            const netCrop = prod.crop - troopUpkeep - popUpkeep;
+
+            const addRes = (key, amount) => {
+                if (typeof next.resources[key] !== "number") next.resources[key] = 0;
+                const max = key === "crop" ? next.maxGranary : next.maxStorage;
+                next.resources[key] = Math.min(
+                    max,
+                    next.resources[key] + (amount / 3600) * TICK_RATE
+                );
+            };
+
+            addRes("wood", prod.wood);
+            addRes("clay", prod.clay);
+            addRes("iron", prod.iron);
+            next.resources.crop = Math.min(
+                next.maxGranary,
+                Math.max(0, next.resources.crop + (netCrop / 3600) * TICK_RATE)
+            );
+
+            const completedConst = [];
+            next.constQueue = next.constQueue.filter((q) => {
+                if (q.finishTime <= now) {
+                    completedConst.push(q);
+                    return false;
+                }
+                return true;
+            });
+
+            completedConst.forEach((c) => {
+                if (c.isField && next.fields[c.index]) {
+                    next.fields[c.index].level = c.level;
+                } else if (next.buildings[c.index]) {
+                    next.buildings[c.index].type = c.type;
+                    next.buildings[c.index].level = c.level;
+                    if (c.type === "warehouse") next.maxStorage += c.level * 800;
+                    if (c.type === "granary") next.maxGranary += c.level * 800;
+                }
+                next.population += 2;
+            });
+
+            next.stats = calculateVillageStats(next);
+            const prosperityBonus = Math.floor(
+                Math.max(0, next.stats?.prosperity || 0) * 0.4
+            );
+            if (prosperityBonus > 0) {
+                addRes("wood", prosperityBonus * 0.35);
+                addRes("clay", prosperityBonus * 0.3);
+                addRes("iron", prosperityBonus * 0.2);
+                next.resources.crop = Math.min(
+                    next.maxGranary,
+                    next.resources.crop + ((prosperityBonus * 0.15) / 3600) * TICK_RATE
+                );
+            }
+
+            const completedTraining = [];
+            next.trainingQueue = next.trainingQueue.filter((q) => {
+                if (q.finishTime <= now) {
+                    completedTraining.push(q);
+                    return false;
+                }
+                return true;
+            });
+
+            completedTraining.forEach((q) => {
+                next.troops.legionnaire += q.amount;
+            });
+
+            const returningMissions = [];
+            next.missions = next.missions.filter((m) => {
+                if (m.returnTime <= now) {
+                    returningMissions.push(m);
+                    return false;
+                }
+                return true;
+            });
+
+            const depositLoot = (loot = {}) => {
+                RESOURCE_KEYS.forEach((key) => {
+                    const isCrop = key === "crop";
+                    const cap = isCrop ? next.maxGranary : next.maxStorage;
+                    const value = Math.max(0, loot[key] || 0);
+                    if (isCrop) {
+                        next.resources.crop = Math.min(cap, next.resources.crop + value);
+                    } else {
+                        next.resources[key] = Math.min(
+                            cap,
+                            (next.resources[key] || 0) + value
+                        );
+                    }
+                });
+            };
+
+            returningMissions.forEach((m) => {
+                if (m.type !== "raid") return;
+
+                const label = m.targetName || m.target || "unknown target";
+                const baseReport = {
+                    id: Date.now() + Math.random(),
+                    title: `Raid on ${label}`,
+                    time: new Date().toLocaleTimeString(),
+                };
+
+                if (m.targetKind === "ai") {
+                    const aiIndex = next.aiVillages.findIndex(
+                        (vill) => vill.id === m.targetId
+                    );
+                    const ai = aiIndex >= 0 ? next.aiVillages[aiIndex] : null;
+                    const loot = cloneResources();
+                    let troopsLost = Math.max(1, Math.floor(m.troops * 0.3));
+                    let survivors = Math.max(0, m.troops - troopsLost);
+
+                    if (ai) {
+                        const aiDefense = Math.max(
+                            5,
+                            Math.round(
+                                (ai.defense || ai.army || 10) *
+                                    (0.8 + Math.random() * 0.6)
+                            )
+                        );
+
+                        if (m.troops > aiDefense) {
+                            troopsLost = Math.max(
+                                1,
+                                Math.floor(
+                                    m.troops *
+                                        (0.25 + aiDefense / Math.max(1, m.troops + aiDefense))
+                                )
+                            );
+                            survivors = Math.max(0, m.troops - troopsLost);
+                            const updatedResources = cloneResources(ai.resources);
+
+                            RESOURCE_KEYS.forEach((key) => {
+                                const available = updatedResources[key];
+                                const haul = Math.min(
+                                    available,
+                                    Math.floor(
+                                        available *
+                                            (survivors / Math.max(1, ai.army)) *
+                                            (0.4 + Math.random() * 0.4)
+                                    )
+                                );
+                                loot[key] = haul;
+                                updatedResources[key] = Math.max(0, available - haul);
+                            });
+
+                            next.aiVillages = next.aiVillages.map((vill, idx) =>
+                                idx === aiIndex
+                                    ? {
+                                          ...vill,
+                                          resources: updatedResources,
+                                          army: Math.max(
+                                              5,
+                                              Math.round(vill.army - troopsLost * 0.4)
+                                          ),
+                                          defense: Math.max(
+                                              5,
+                                              Math.round(vill.defense - troopsLost * 0.2)
+                                          ),
+                                      }
+                                    : vill
+                            );
+
+                            depositLoot(loot);
+                            next.events = pushEvent(
+                                next.events,
+                                `${survivors}/${m.troops} Legionnaires plundered ${ai.name}.`,
+                                "raid"
+                            );
+                        } else {
+                            const casualtyRate = Math.min(
+                                0.95,
+                                0.5 + aiDefense / Math.max(1, m.troops * 2)
+                            );
+                            troopsLost = Math.max(1, Math.floor(m.troops * casualtyRate));
+                            survivors = Math.max(0, m.troops - troopsLost);
+                            next.events = pushEvent(
+                                next.events,
+                                `${ai.name} held firm. ${survivors}/${m.troops} returned.`,
+                                "raid"
+                            );
+                        }
+                    } else {
+                        depositLoot(loot);
+                    }
+
+                    next.troops.legionnaire += survivors;
+                    next.reports.unshift({
+                        ...baseReport,
+                        loot,
+                        troopsSent: m.troops,
+                        troopsLost,
+                        troopsReturned: survivors,
+                    });
+                    return;
+                }
+
+                if (m.targetKind === "neutral") {
+                    const defense = m.targetDefense || 6;
+                    const lootRange = m.lootRange || [60, 140];
+                    const casualtyRate = Math.min(
+                        0.8,
+                        0.25 + defense / Math.max(10, m.troops * 3)
+                    );
+                    const troopsLost = Math.max(
+                        0,
+                        Math.floor(m.troops * (0.2 + Math.random() * casualtyRate))
+                    );
+                    const survivors = Math.max(0, m.troops - troopsLost);
+                    const loot = cloneResources();
+
+                    if (survivors > 0) {
+                        const baseLoot = randomBetween(lootRange[0], lootRange[1]);
+                        const totalLoot = Math.floor(baseLoot * (1 + survivors / 6));
+                        RESOURCE_KEYS.forEach((key) => {
+                            loot[key] = Math.max(
+                                0,
+                                Math.floor(
+                                    (totalLoot / RESOURCE_KEYS.length) *
+                                        (0.7 + Math.random() * 0.6)
+                                )
+                            );
+                        });
+                        depositLoot(loot);
+                    }
+
+                    next.troops.legionnaire += survivors;
+                    next.reports.unshift({
+                        ...baseReport,
+                        loot,
+                        troopsSent: m.troops,
+                        troopsLost,
+                        troopsReturned: survivors,
+                    });
+                    next.events = pushEvent(
+                        next.events,
+                        `${survivors}/${m.troops} Legionnaires returned from ${label}.`,
+                        "raid"
+                    );
+                    return;
+                }
+
+                // Legacy raids fallback
+                const casualtyRate = 0.1 + Math.random() * 0.25;
+                const lost = Math.floor(m.troops * casualtyRate);
+                const survivors = Math.max(0, m.troops - lost);
+                const loot = {
+                    wood: Math.floor(Math.random() * 80 * survivors),
+                    clay: Math.floor(Math.random() * 80 * survivors),
+                    iron: Math.floor(Math.random() * 80 * survivors),
+                    crop: Math.floor(Math.random() * 80 * survivors),
+                };
+
+                depositLoot(loot);
+                next.troops.legionnaire += survivors;
+                next.reports.unshift({
+                    ...baseReport,
+                    loot,
+                    troopsSent: m.troops,
+                    troopsLost: lost,
+                    troopsReturned: survivors,
+                });
+                next.events = pushEvent(
+                    next.events,
+                    `${survivors}/${m.troops} Legionnaires returned from ${label}.`,
+                    "raid"
+                );
+            });
+
+            next.aiVillages = next.aiVillages.map((ai) => {
+                if (!ai) return ai;
+                const resources = cloneResources(ai.resources);
+                const maxResources = ai.maxResources || ai.loot || DEFAULT_AI_STOCKPILE;
+                const regen = ai.regen || DEFAULT_AI_REGEN;
+                RESOURCE_KEYS.forEach((key) => {
+                    const maxValue = maxResources[key] || DEFAULT_AI_STOCKPILE[key];
+                    const gain = regen[key] || 0;
+                    resources[key] = Math.min(maxValue, resources[key] + gain);
+                });
+
+                let updated = { ...ai, resources };
+                if (ai.nextAttack && ai.nextAttack <= now) {
+                    const interval = ai.attackInterval || DEFAULT_AI_ATTACK_INTERVAL;
+                    const forceRange = ai.attackForceRange || DEFAULT_AI_ATTACK_FORCE;
+                    const attackTroops = Math.max(
+                        3,
+                        randomBetween(forceRange[0], forceRange[1])
+                    );
+                    const defenders = next.troops.legionnaire || 0;
+                    const stats = next.stats || calculateVillageStats(next);
+                    const defenseBoost = Math.floor((stats.defense || 0) / 6);
+                    const scoutingReduction = Math.min(
+                        0.5,
+                        (stats.scouting || 0) / 200
+                    );
+                    const effectiveAttackForce = Math.max(
+                        3,
+                        Math.floor(attackTroops * (1 - scoutingReduction))
+                    );
+                    const defenseStrength = defenders + defenseBoost;
+
+                    if (defenseStrength >= effectiveAttackForce) {
+                        const losses = Math.max(
+                            1,
+                            Math.floor(
+                                effectiveAttackForce * (0.35 + Math.random() * 0.25)
+                            )
+                        );
+                        const mitigatedLosses = Math.max(
+                            0,
+                            losses - Math.floor(defenseBoost / 4)
+                        );
+                        next.troops.legionnaire = Math.max(
+                            0,
+                            defenders - mitigatedLosses
+                        );
+                        const defenseNote =
+                            defenseBoost > 0
+                                ? " Fortifications absorbed part of the blow."
+                                : "";
+                        next.events = pushEvent(
+                            next.events,
+                            `${ai.name} attack repelled.${defenseNote}`,
+                            "defense"
+                        );
+                        next.reports.unshift({
+                            id: Date.now() + Math.random(),
+                            title: `${ai.name} attack repelled`,
+                            loot: cloneResources(),
+                            time: new Date().toLocaleTimeString(),
+                            troopsSent: attackTroops,
+                            troopsLost: mitigatedLosses,
+                            troopsReturned: next.troops.legionnaire,
+                            defense: true,
+                        });
+                    } else {
+                        const stolen = cloneResources();
+                        const baseStealRatio = Math.min(
+                            0.5,
+                            0.15 + effectiveAttackForce / 120
+                        );
+                        const scoutingShield = Math.min(
+                            0.3,
+                            (stats.scouting || 0) / 250
+                        );
+                        RESOURCE_KEYS.forEach((key) => {
+                            const available = next.resources[key] || 0;
+                            const takeRatio = Math.max(
+                                0.05,
+                                baseStealRatio - scoutingShield
+                            );
+                            const take = Math.floor(available * takeRatio);
+                            stolen[key] = take;
+                            next.resources[key] = Math.max(0, available - take);
+                        });
+                        const troopLoss = Math.min(
+                            defenders,
+                            Math.max(
+                                0,
+                                Math.floor(effectiveAttackForce * 0.7) -
+                                    Math.floor(defenseBoost / 5)
+                            )
+                        );
+                        next.troops.legionnaire = Math.max(0, defenders - troopLoss);
+                        const breachNote =
+                            defenseBoost > 0
+                                ? " Fortifications slowed them, but not enough."
+                                : "";
+                        next.events = pushEvent(
+                            next.events,
+                            `${ai.name} pillaged the village!${breachNote}`,
+                            "defense"
+                        );
+                        next.reports.unshift({
+                            id: Date.now() + Math.random(),
+                            title: `${ai.name} pillaged the village`,
+                            loot: stolen,
+                            time: new Date().toLocaleTimeString(),
+                            troopsSent: attackTroops,
+                            troopsLost: troopLoss,
+                            troopsReturned: next.troops.legionnaire,
+                            defense: true,
+                        });
+                    }
+
+                    updated = {
+                        ...updated,
+                        nextAttack: now + randomBetween(interval[0], interval[1]),
+                    };
+                }
+
+                return updated;
+            });
+
+            if (next.quests && next.quests.length) {
+                next.quests = next.quests.map((q) => {
+                    if (q.completed) return q;
+
+                    switch (q.type) {
+                        case "fieldLevel": {
+                            const anyField = next.fields.some(
+                                (f) => f.level >= q.targetLevel
+                            );
+                            return anyField ? { ...q, completed: true } : q;
+                        }
+                        case "buildBuilding": {
+                            const hasBuilding = next.buildings.some(
+                                (b) => b.type === q.buildingType && b.level > 0
+                            );
+                            return hasBuilding ? { ...q, completed: true } : q;
+                        }
+                        case "troopsCount": {
+                            const count = next.troops[q.unit] || 0;
+                            return count >= q.target ? { ...q, completed: true } : q;
+                        }
+                        default:
+                            return q;
+                    }
+                });
+            }
+
+            return next;
+        };
+
+        const getBuildingLevelByType = (buildings = [], type) => {
+            if (!Array.isArray(buildings)) return 0;
+            const structure = buildings.find((b) => b.type === type);
+            return structure ? structure.level || 0 : 0;
+        };
+
+        const getMainBuildingLevel = (buildings) =>
+            getBuildingLevelByType(buildings, "mainbuilding");
+
+        const getBarracksLevel = (buildings) =>
+            getBuildingLevelByType(buildings, "barracks");
+
+        const calculateVillageStats = (state = {}) => {
+            const buildings = state.buildings || [];
+            const palisadeLevel = getBuildingLevelByType(buildings, "palisade");
+            const watchtowerLevel = getBuildingLevelByType(buildings, "watchtower");
+            const marketLevel = getBuildingLevelByType(buildings, "market");
+            const academyLevel = getBuildingLevelByType(buildings, "academy");
+            const population = state.population || 0;
+
+            const defense = palisadeLevel * 12 + Math.floor(population / 4);
+            const scouting = watchtowerLevel * 10 + academyLevel * 3;
+            const prosperity = marketLevel * 18 + Math.floor(population / 5);
+            const knowledge = academyLevel * 15;
+
+            return { defense, scouting, prosperity, knowledge };
+        };
+
+        function App() {
+            const [gameData, setGameData] = useState(null);
+            const [state, setState] = useState(null);
+            const [loadingData, setLoadingData] = useState(true);
+            const [dataError, setDataError] = useState(null);
+            const [activeTab, setActiveTab] = useState("fields");
+            const [selectedSlot, setSelectedSlot] = useState(null);
+            const [modalOpen, setModalOpen] = useState(false);
+            const [trainError, setTrainError] = useState("");
+            const trainInputRef = useRef(null);
+
+            useEffect(() => {
+                let isMounted = true;
+
+                fetch(DATA_PATH)
+                    .then((res) => {
+                        if (!res.ok) {
+                            throw new Error(`Failed to load ${DATA_PATH}`);
+                        }
+                        return res.json();
+                    })
+                    .then((json) => {
+                        if (!isMounted) return;
+                        setGameData(json);
+                        const baseState = createInitialState(json);
+                        const saved = localStorage.getItem(SAVE_KEY);
+                        if (saved) {
+                            try {
+                                const parsed = JSON.parse(saved);
+                                setState(mergeStateWithDefaults(parsed, baseState));
+                            } catch (err) {
+                                console.error("Failed to parse save data", err);
+                                setState(baseState);
+                            }
+                        } else {
+                            setState(baseState);
+                        }
+                    })
+                    .catch((err) => {
+                        if (!isMounted) return;
+                        console.error(err);
+                        setDataError(err.message);
+                    })
+                    .finally(() => {
+                        if (isMounted) setLoadingData(false);
+                    });
+
+                return () => {
+                    isMounted = false;
+                };
+            }, []);
+
+            useEffect(() => {
+                if (!gameData) return;
+                const interval = setInterval(() => {
+                    setState((prev) => runGameTick(prev, gameData));
+                }, TICK_RATE);
+                return () => clearInterval(interval);
+            }, [gameData]);
+
+            useEffect(() => {
+                if (!state) return;
+                localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+            }, [state]);
+
+            if (loadingData) {
+                return (
+                    <div className="w-full h-full flex items-center justify-center bg-slate-950 text-slate-200">
+                        Loading game data...
+                    </div>
+                );
+            }
+
+            if (dataError) {
+                return (
+                    <div className="w-full h-full flex items-center justify-center bg-slate-950 text-slate-200 px-4 text-center">
+                        Failed to load game data: {dataError}
+                    </div>
+                );
+            }
+
+            if (!state || !gameData) {
+                return null;
+            }
+
+            const focusOptions = gameData.focusOptions || {};
+            const weatherPatterns = gameData.weatherPatterns || [];
+            const buildingTypes = gameData.buildingTypes || {};
+
+            // --- ACTIONS ---
+            const upgradeBuilding = (type) => {
+                if (!selectedSlot) return;
+                const { index, isField, level } = selectedSlot;
+                const costs = getCost(type, level, buildingTypes);
+
+                if (
+                    state.resources.wood < costs[0] ||
+                    state.resources.clay < costs[1] ||
+                    state.resources.iron < costs[2] ||
+                    state.resources.crop < costs[3]
+                ) {
+                    alert("Not enough resources!");
+                    return;
+                }
+
+                setState((prev) => {
+                    const mainLevel = getMainBuildingLevel(prev.buildings);
+                    const baseTime = 10000; // ms
+                    const timeFactor = 1 - Math.min(0.4, mainLevel * 0.05); // up to 40% faster
+                    const buildTime = (baseTime * timeFactor) / SPEED_MULTIPLIER;
+
+                    return {
+                        ...prev,
+                        resources: {
+                            wood: prev.resources.wood - costs[0],
+                            clay: prev.resources.clay - costs[1],
+                            iron: prev.resources.iron - costs[2],
+                            crop: prev.resources.crop - costs[3],
+                        },
+                        constQueue: [
+                            ...prev.constQueue,
+                            {
+                                type,
+                                index,
+                                level: level + 1,
+                                finishTime: Date.now() + buildTime,
+                                isField,
+                            },
+                        ],
+                    };
+                });
+                setModalOpen(false);
+            };
+
+            const trainTroops = (amount) => {
+                const costPerUnit = [120, 100, 150, 30];
+                const totalCost = costPerUnit.map((c) => c * amount);
+
+                if (
+                    state.resources.wood < totalCost[0] ||
+                    state.resources.clay < totalCost[1] ||
+                    state.resources.iron < totalCost[2] ||
+                    state.resources.crop < totalCost[3]
+                ) {
+                    return false;
+                }
+
+                setState((prev) => {
+                    const barracksLevel = getBarracksLevel(prev.buildings);
+                    const academyLevel = getBuildingLevelByType(
+                        prev.buildings,
+                        "academy"
+                    );
+                    const baseTimePerUnit = 2000; // ms
+                    const timeFactor = 1 - Math.min(0.5, barracksLevel * 0.07); // up to 50% faster
+                    const knowledgeBoost = Math.min(0.3, academyLevel * 0.05);
+                    const totalTime =
+                        (amount * baseTimePerUnit * timeFactor * (1 - knowledgeBoost)) /
+                        SPEED_MULTIPLIER;
+
+                    return {
+                        ...prev,
+                        resources: {
+                            wood: prev.resources.wood - totalCost[0],
+                            clay: prev.resources.clay - totalCost[1],
+                            iron: prev.resources.iron - totalCost[2],
+                            crop: prev.resources.crop - totalCost[3],
+                        },
+                        trainingQueue: [
+                            ...prev.trainingQueue,
+                            {
+                                type: "legionnaire",
+                                amount,
+                                finishTime: Date.now() + totalTime,
+                            },
+                        ],
+                    };
+                });
+                return true;
+            };
+
+            const sendRaid = (targetRef) => {
+                if (!targetRef) return;
+                const normalizedTarget =
+                    typeof targetRef === "string"
+                        ? { id: targetRef, name: targetRef, kind: "neutral" }
+                        : targetRef;
+                const label = normalizedTarget.name || normalizedTarget.id || "target";
+                const amount = parseInt(
+                    prompt(`How many Legionnaires to send to ${label}?`, "1"),
+                    10
+                );
+                if (!amount || isNaN(amount) || amount <= 0) return;
+                if (state.troops.legionnaire < amount) {
+                    alert("Not enough troops!");
+                    return;
+                }
+
+                let missionTarget = null;
+                if (normalizedTarget.kind === "ai") {
+                    const ai = state.aiVillages?.find((vill) => vill.id === normalizedTarget.id);
+                    if (!ai) {
+                        alert("Target village not found.");
+                        return;
+                    }
+                    const now = Date.now();
+                    if (ai.raidCooldownUntil && ai.raidCooldownUntil > now) {
+                        alert(
+                            `Scouts need ${formatCountdown(
+                                ai.raidCooldownUntil - now
+                            )} before striking ${ai.name} again.`
+                        );
+                        return;
+                    }
+                    missionTarget = {
+                        id: ai.id,
+                        name: ai.name,
+                        kind: "ai",
+                        travelTime: ai.travelTime,
+                    };
+                } else {
+                    missionTarget = {
+                        id: normalizedTarget.id,
+                        name: normalizedTarget.name,
+                        kind: "neutral",
+                        travelTime: normalizedTarget.travelTime,
+                        targetDefense: normalizedTarget.defense,
+                        lootRange: normalizedTarget.lootRange,
+                    };
+                }
+
+                const travelTime = Math.max(
+                    MIN_RAID_TRAVEL_TIME,
+                    Math.floor((missionTarget.travelTime || 20000) / SPEED_MULTIPLIER)
+                );
+
+                setState((prev) => {
+                    const now = Date.now();
+                    const missions = [
+                        ...prev.missions,
+                        {
+                            id: Date.now() + Math.random(),
+                            targetId: missionTarget.id,
+                            targetName: missionTarget.name,
+                            targetKind: missionTarget.kind,
+                            targetDefense: missionTarget.targetDefense,
+                            lootRange: missionTarget.lootRange,
+                            target: missionTarget.name,
+                            troops: amount,
+                            type: "raid",
+                            returnTime: now + travelTime,
+                        },
+                    ];
+
+                    const updatedAIs =
+                        missionTarget.kind === "ai"
+                            ? (prev.aiVillages || []).map((vill) =>
+                                  vill.id === missionTarget.id
+                                      ? {
+                                            ...vill,
+                                            raidCooldownUntil: now + AI_RAID_COOLDOWN,
+                                            lastRaid: now,
+                                        }
+                                      : vill
+                              )
+                            : prev.aiVillages;
+
+                    return {
+                        ...prev,
+                        troops: {
+                            ...prev.troops,
+                            legionnaire: prev.troops.legionnaire - amount,
+                        },
+                        aiVillages: updatedAIs,
+                        missions,
+                        events: pushEvent(
+                            prev.events,
+                            `Sent ${amount} Legionnaires towards ${missionTarget.name}.`,
+                            "raid"
+                        ),
+                    };
+                });
+            };
+
+            const claimQuest = (id) => {
+                setState((prev) => {
+                    const next = { ...prev };
+                    const quest = next.quests.find((q) => q.id === id);
+                    if (!quest || quest.claimed || !quest.completed) return prev;
+
+                    quest.claimed = true;
+
+                    // Simple rewards: 400 of each resource
+                    const reward = 400;
+                    next.resources.wood = Math.min(
+                        next.maxStorage,
+                        next.resources.wood + reward
+                    );
+                    next.resources.clay = Math.min(
+                        next.maxStorage,
+                        next.resources.clay + reward
+                    );
+                    next.resources.iron = Math.min(
+                        next.maxStorage,
+                        next.resources.iron + reward
+                    );
+                    next.resources.crop = Math.min(
+                        next.maxGranary,
+                        next.resources.crop + reward
+                    );
+
+                    next.events = pushEvent(
+                        next.events,
+                        `Quest "${quest.title}" reward claimed!`,
+                        "quest"
+                    );
+
+                    return next;
+                });
+            };
+
+            const changeProductionFocus = (focusKey) => {
+                setState((prev) => {
+                    if (prev.productionFocus === focusKey) return prev;
+                    const choice =
+                        focusOptions[focusKey] ||
+                        focusOptions.balanced || {
+                            label: "Balanced",
+                        };
+                    return {
+                        ...prev,
+                        productionFocus: focusKey,
+                        events: pushEvent(
+                            prev.events,
+                            `Council shifts focus to ${choice.label}.`,
+                            "policy"
+                        ),
+                    };
+                });
+            };
+
+            const activateCouncilBoost = () => {
+                setState((prev) => {
+                    const now = Date.now();
+                    const council = prev.council || {
+                        activeUntil: 0,
+                        cooldownUntil: 0,
+                    };
+
+                    if (council.activeUntil > now) {
+                        alert("The council's decree is already in effect!");
+                        return prev;
+                    }
+
+                    if (council.cooldownUntil > now) {
+                        const remaining = formatCountdown(
+                            council.cooldownUntil - now
+                        );
+                        alert(`Council resting. Cooldown: ${remaining}`);
+                        return prev;
+                    }
+
+                    return {
+                        ...prev,
+                        council: {
+                            activeUntil: now + COUNCIL_BOOST.duration,
+                            cooldownUntil: now + COUNCIL_BOOST.cooldown,
+                        },
+                        events: pushEvent(
+                            prev.events,
+                            "Council decree: +25% production for 2 minutes!",
+                            "policy"
+                        ),
+                    };
+                });
+            };
+
+            // --- UI Components ---
+
+            const TopBar = () => (
+                <header className="safe-top bg-emerald-950/95 text-amber-100 border-b border-emerald-800 px-4 py-2 flex items-center justify-between">
+                    <div className="flex flex-col">
+                        <span className="text-xs uppercase tracking-[0.2em] text-emerald-300">
+                            Civitas
+                        </span>
+                        <span className="text-sm font-semibold">Village of Aurelia</span>
+                    </div>
+                    <div className="text-right text-[10px] text-emerald-200">
+                        <div>Pop: {state.population}</div>
+                        <div className="flex items-center gap-1 justify-end">
+                            <Icons.Sword />
+                            <span>{state.troops.legionnaire}</span>
+                        </div>
+                    </div>
+                </header>
+            );
+
+            const ResourceBar = () => {
+                const res = state.resources;
+                const caps = { s: state.maxStorage, g: state.maxGranary };
+
+                const ResItem = ({ icon: Icon, val, max }) => {
+                    const pct = Math.min(100, (val / max) * 100);
+                    return (
+                        <div className="flex flex-col items-center flex-1 min-w-[72px] px-1">
+                            <div className="flex items-center gap-1 mb-0.5">
+                                <Icon />
+                                <span className="text-[11px] font-mono font-semibold">
+                                    {formatNum(val)}
+                                </span>
+                            </div>
+                            <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                <div
+                                    className="h-full bg-gradient-to-r from-emerald-400 to-amber-400 transition-all duration-300"
+                                    style={{ width: pct + "%" }}
+                                />
+                            </div>
+                        </div>
+                    );
+                };
+
+                return (
+                    <div className="bg-slate-900/95 border-b border-slate-800 px-2 py-2">
+                        <div className="flex gap-1 overflow-x-auto game-scroll">
+                            <ResItem icon={Icons.Wood} val={res.wood} max={caps.s} />
+                            <ResItem icon={Icons.Clay} val={res.clay} max={caps.s} />
+                            <ResItem icon={Icons.Iron} val={res.iron} max={caps.s} />
+                            <ResItem icon={Icons.Crop} val={res.crop} max={caps.g} />
+                        </div>
+                    </div>
+                );
+            };
+
+            const WeatherPanel = () => {
+                const weather =
+                    weatherPatterns[state.weatherIndex] ||
+                    weatherPatterns[0] || {
+                        icon: "?",
+                        name: "Unknown",
+                        description: "Awaiting forecast...",
+                        modifiers: { wood: 1, clay: 1, iron: 1, crop: 1 },
+                    };
+                const remaining = Math.max(
+                    0,
+                    (state.nextWeatherChange || 0) - Date.now()
+                );
+
+                const modifierText = (value) => {
+                    const pct = Math.round((value - 1) * 100);
+                    if (pct === 0) return "±0%";
+                    return `${pct > 0 ? "+" : ""}${pct}%`;
+                };
+
+                return (
+                    <div className="bg-emerald-950/80 border-b border-emerald-900 px-4 py-3 text-slate-100">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <div className="text-[10px] uppercase tracking-wide text-emerald-300">
+                                    Current Weather
+                                </div>
+                                <div className="flex items-center gap-2 text-sm font-semibold">
+                                    <span className="text-xl">{weather.icon}</span>
+                                    {weather.name}
+                                </div>
+                            </div>
+                            <div className="text-right text-[11px] text-emerald-200">
+                                Next change in
+                                <div className="font-mono text-sm">
+                                    {formatCountdown(remaining)}
+                                </div>
+                            </div>
+                        </div>
+                        <p className="text-[11px] text-slate-300 mt-1">
+                            {weather.description}
+                        </p>
+                        <div className="mt-2 grid grid-cols-4 gap-2 text-[10px] text-slate-200">
+                            <span>Wood {modifierText(weather.modifiers.wood)}</span>
+                            <span>Clay {modifierText(weather.modifiers.clay)}</span>
+                            <span>Iron {modifierText(weather.modifiers.iron)}</span>
+                            <span>Crop {modifierText(weather.modifiers.crop)}</span>
+                        </div>
+                    </div>
+                );
+            };
+
+            const ProductionInsights = () => {
+                const prod = calculateHourlyProduction(state, gameData);
+                const troopUpkeep = state.troops.legionnaire;
+                const popUpkeep = state.population;
+                const netCrop = prod.crop - troopUpkeep - popUpkeep;
+
+                const rows = [
+                    { key: "wood", label: "Wood" },
+                    { key: "clay", label: "Clay" },
+                    { key: "iron", label: "Iron" },
+                    { key: "crop", label: "Crop" },
+                ];
+
+                const capFor = (key) =>
+                    key === "crop" ? state.maxGranary : state.maxStorage;
+                const timeToCap = (key) => {
+                    const perHour =
+                        key === "crop" ? Math.max(netCrop, 0) : prod[key];
+                    const current = state.resources[key];
+                    const cap = capFor(key);
+                    if (perHour <= 0) return key === "crop" ? "Declining" : "Stable";
+                    if (current >= cap) return "Full";
+                    return formatTimeToCap((cap - current) / perHour);
+                };
+
+                return (
+                    <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3 text-slate-100">
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="text-[11px] uppercase text-slate-400 font-semibold">
+                                Production outlook
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                                per hour
+                            </div>
+                        </div>
+                        <div className="space-y-1">
+                            {rows.map((row) => (
+                                <div
+                                    key={row.key}
+                                    className="flex items-center justify-between text-[11px] bg-slate-950/60 rounded-lg px-2 py-1.5"
+                                >
+                                    <span className="font-semibold text-slate-200">
+                                        {row.label}
+                                    </span>
+                                    <span className="font-mono text-emerald-300">
+                                        {formatNum(Math.max(0, Math.round(prod[row.key])))}
+                                        /h
+                                        {row.key === "crop" && (
+                                            <span className="text-[10px] text-amber-300 ml-1">
+                                                net {formatNum(Math.round(netCrop))}/h
+                                            </span>
+                                        )}
+                                    </span>
+                                    <span className="text-slate-300">
+                                        {timeToCap(row.key)}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                );
+            };
+
+            const StrategyPanel = () => {
+                const now = Date.now();
+                const council = state.council || {
+                    activeUntil: 0,
+                    cooldownUntil: 0,
+                };
+                const councilActive = council.activeUntil > now;
+                const cooldownRemaining = Math.max(0, council.cooldownUntil - now);
+
+                const councilLabel = councilActive
+                    ? "Boost active"
+                    : cooldownRemaining > 0
+                    ? `Cooldown ${formatCountdown(cooldownRemaining)}`
+                    : "Call council";
+
+                return (
+                    <div className="bg-slate-900/80 border border-emerald-800/60 rounded-xl p-3 text-slate-100">
+                        <div className="text-[11px] uppercase text-emerald-300 font-semibold mb-2">
+                            Strategic focus
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            {Object.entries(focusOptions).map(([key, opt]) => {
+                                const isActive = state.productionFocus === key;
+                                return (
+                                    <button
+                                        key={key}
+                                        type="button"
+                                        onClick={() => changeProductionFocus(key)}
+                                        className={`text-left border rounded-lg px-2 py-2 text-[11px] transition-colors ${
+                                            isActive
+                                                ? "border-emerald-400 bg-emerald-900/40"
+                                                : "border-slate-700 bg-slate-950/50"
+                                        }`}
+                                    >
+                                        <div className="font-semibold text-slate-50">
+                                            {opt.label}
+                                        </div>
+                                        <div className="text-[10px] text-slate-300">
+                                            {opt.description}
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        <div className="mt-3 p-3 rounded-lg bg-emerald-950/60 border border-emerald-800">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <div className="text-xs font-semibold text-emerald-200">
+                                        Council decree
+                                    </div>
+                                    <p className="text-[10px] text-slate-300">
+                                        +25% all production for 2 minutes. Cooldown 10m.
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={activateCouncilBoost}
+                                    disabled={councilActive || cooldownRemaining > 0}
+                                    className={`text-[11px] font-semibold px-3 py-1.5 rounded-lg border ${
+                                        councilActive || cooldownRemaining > 0
+                                            ? "border-slate-700 text-slate-500"
+                                            : "border-emerald-400 text-emerald-200"
+                                    }`}
+                                >
+                                    {councilLabel}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const EventLog = () => {
+                if (!state.events || state.events.length === 0) return null;
+                return (
+                    <div className="mt-5 bg-slate-900/80 border border-slate-800 rounded-xl p-3 text-slate-100">
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="text-[11px] uppercase text-slate-400 font-semibold">
+                                Village newscast
+                            </div>
+                            <span className="text-[10px] text-slate-500">
+                                Latest {state.events.length}
+                            </span>
+                        </div>
+                        <div className="space-y-2 max-h-40 overflow-y-auto game-scroll pr-1">
+                            {state.events.map((event) => (
+                                <div
+                                    key={event.id}
+                                    className="border border-slate-800/80 bg-slate-950/70 rounded-lg px-2.5 py-1.5"
+                                >
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="text-[11px] text-slate-100">
+                                            {event.message}
+                                        </span>
+                                        <span className="text-[10px] text-slate-400">
+                                            {event.time}
+                                        </span>
+                                    </div>
+                                    <span className="text-[10px] uppercase text-emerald-300">
+                                        {event.type}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                );
+            };
+
+            const FieldsView = () => (
+                <div className="px-4 py-4 pb-20">
+                    <div className="text-center mb-3">
+                        <h2 className="text-lg font-semibold text-emerald-100">Resource Fields</h2>
+                        <p className="text-[11px] text-slate-300">
+                            Upgrade fields to increase production.
+                        </p>
+                    </div>
+                    <div className="space-y-3 mb-4">
+                        <ProductionInsights />
+                        <StrategyPanel />
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                        {state.fields.map((f, i) => {
+                            const isBuilding = state.constQueue.find(
+                                (q) => q.isField && q.index === i
+                            );
+                            let borderColor = "border-slate-700 bg-slate-900/70";
+                            if (f.type === "woodcutter")
+                                borderColor = "border-amber-500/60 bg-amber-950/30";
+                            if (f.type === "claypit")
+                                borderColor = "border-orange-500/60 bg-orange-950/30";
+                            if (f.type === "ironmine")
+                                borderColor = "border-slate-400/60 bg-slate-950/50";
+                            if (f.type === "cropland")
+                                borderColor = "border-yellow-400/60 bg-yellow-950/30";
+
+                            return (
+                                <button
+                                    type="button"
+                                    key={i}
+                                    onClick={() => {
+                                        setSelectedSlot({
+                                            index: i,
+                                            isField: true,
+                                            level: f.level,
+                                            type: f.type,
+                                        });
+                                        setModalOpen(true);
+                                    }}
+                                    className={`aspect-square rounded-xl border ${borderColor} flex flex-col items-center justify-center relative shadow-sm active:scale-95 transition-transform`}
+                                >
+                                    <div className="font-bold text-xl text-slate-50 mb-1">
+                                        {f.level}
+                                    </div>
+                                    {f.type === "woodcutter" && <Icons.Wood />}
+                                    {f.type === "claypit" && <Icons.Clay />}
+                                    {f.type === "ironmine" && <Icons.Iron />}
+                                    {f.type === "cropland" && <Icons.Crop />}
+
+                                    {isBuilding && (
+                                        <div className="absolute inset-0 bg-black/40 rounded-xl flex items-center justify-center">
+                                            <div className="flex items-center gap-2 text-xs text-emerald-200">
+                                                <div className="animate-spin">
+                                                    <Icons.Timer />
+                                                </div>
+                                                <span>Building...</span>
+                                            </div>
+                                        </div>
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+            );
+
+            const VillageStatsPanel = () => {
+                const stats = state.stats || calculateVillageStats(state);
+                const palisadeLevel = getBuildingLevelByType(
+                    state.buildings,
+                    "palisade"
+                );
+                const watchtowerLevel = getBuildingLevelByType(
+                    state.buildings,
+                    "watchtower"
+                );
+                const marketLevel = getBuildingLevelByType(state.buildings, "market");
+                const academyLevel = getBuildingLevelByType(state.buildings, "academy");
+                const defenseTroops = Math.floor((stats.defense || 0) / 6);
+                const scoutingMitigation = Math.round(
+                    Math.min(0.5, (stats.scouting || 0) / 200) * 100
+                );
+                const tradePerHour = Math.floor(
+                    Math.max(0, stats.prosperity || 0) * 0.4
+                );
+                const knowledgeBoost = Math.min(30, academyLevel * 5);
+
+                const cards = [
+                    {
+                        key: "defense",
+                        label: "Defense",
+                        icon: Icons.Shield,
+                        value: stats.defense,
+                        detail:
+                            palisadeLevel > 0
+                                ? `Palisade lvl ${palisadeLevel} adds ${defenseTroops} extra defenders.`
+                                : "Build a Palisade to fortify the village.",
+                    },
+                    {
+                        key: "scouting",
+                        label: "Scouting",
+                        icon: Icons.Eye,
+                        value: stats.scouting,
+                        detail:
+                            watchtowerLevel > 0
+                                ? `Watchtower lvl ${watchtowerLevel} softens raids by ~${scoutingMitigation}%.`
+                                : "Erect a Watchtower to spot threats earlier.",
+                    },
+                    {
+                        key: "prosperity",
+                        label: "Prosperity",
+                        icon: Icons.Coin,
+                        value: stats.prosperity,
+                        detail:
+                            marketLevel > 0
+                                ? `Market brings in ~${tradePerHour}/h bonus resources.`
+                                : "Markets unlock steady trade trickles.",
+                    },
+                    {
+                        key: "knowledge",
+                        label: "Knowledge",
+                        icon: Icons.Book,
+                        value: stats.knowledge,
+                        detail:
+                            academyLevel > 0
+                                ? `Academy cuts troop training by ${knowledgeBoost}%.`
+                                : "An academy accelerates military research.",
+                    },
+                ];
+
+                return (
+                    <div className="bg-slate-900/85 border border-slate-800 rounded-xl p-3 text-slate-100 mb-4">
+                        <div className="text-[11px] uppercase text-slate-400 font-semibold mb-2">
+                            Civic metrics
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            {cards.map((card) => {
+                                const IconComp = card.icon;
+                                return (
+                                    <div
+                                        key={card.key}
+                                        className="border border-slate-800 rounded-lg px-2.5 py-2 bg-slate-950/70 flex flex-col gap-1"
+                                    >
+                                        <div className="flex items-center justify-between text-xs">
+                                            <span className="flex items-center gap-1 text-slate-200">
+                                                <IconComp /> {card.label}
+                                            </span>
+                                            <span className="font-mono text-emerald-300">
+                                                {card.value}
+                                            </span>
+                                        </div>
+                                        <div className="text-[10px] text-slate-400 leading-tight">
+                                            {card.detail}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                );
+            };
+
+            const VillageView = () => (
+                <div className="px-4 py-4 pb-24">
+                    <div className="text-center mb-3">
+                        <h2 className="text-lg font-semibold text-emerald-100">Village Center</h2>
+                        <p className="text-[11px] text-slate-300">
+                            Construct and upgrade infrastructure.
+                        </p>
+                    </div>
+                    <VillageStatsPanel />
+                    <div className="grid grid-cols-2 gap-3">
+                        {state.buildings.map((b, i) => {
+                            const isBuilding = state.constQueue.find(
+                                (q) => !q.isField && q.index === i
+                            );
+                            return (
+                                <button
+                                    key={b.id}
+                                    type="button"
+                                    onClick={() => {
+                                        setSelectedSlot({
+                                            index: i,
+                                            isField: false,
+                                            level: b.level,
+                                            type: b.type,
+                                        });
+                                        setModalOpen(true);
+                                    }}
+                                    className="h-24 rounded-lg border border-slate-700 bg-slate-900/80 shadow-sm flex flex-col items-center justify-center px-2 relative active:bg-slate-800/80"
+                                >
+                                    {b.type ? (
+                                        <>
+                                            <div className="font-semibold text-xs text-center text-slate-50 mb-1">
+                                                {buildingTypes[b.type]?.name || "Structure"}
+                                            </div>
+                                            <div className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-slate-200">
+                                                Lvl {b.level}
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <div className="text-slate-500 text-xs font-medium">
+                                            Empty Slot
+                                        </div>
+                                    )}
+
+                                    {isBuilding && (
+                                        <div className="absolute inset-0 bg-emerald-500/10 rounded-lg border border-emerald-400 flex flex-col items-center justify-center">
+                                            <span className="text-[11px] font-bold text-emerald-100 bg-slate-900/80 px-2 py-1 rounded">
+                                                Construction
+                                            </span>
+                                        </div>
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    <div className="mt-5 bg-slate-900/90 border border-slate-700 text-slate-50 rounded-lg p-3 shadow">
+                        <div className="flex justify-between items-center mb-2">
+                            <div className="flex items-center gap-2">
+                                <Icons.Sword />
+                                <h3 className="font-semibold text-sm">Army</h3>
+                            </div>
+                            <span className="text-amber-300 font-mono text-sm">
+                                {state.troops.legionnaire} units
+                            </span>
+                        </div>
+                        {state.trainingQueue.length > 0 && (
+                            <div className="text-[11px] text-slate-300 bg-slate-800/80 px-2 py-1.5 rounded">
+                                Training {state.trainingQueue[0].amount} units...
+                            </div>
+                        )}
+                        {state.trainingQueue.length === 0 && (
+                            <div className="text-[11px] text-slate-400">
+                                No units training. Build a Barracks to train troops.
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="mt-5 bg-slate-900/90 border border-amber-700/70 text-slate-50 rounded-lg p-3 shadow">
+                        <div className="flex justify-between items-center mb-2">
+                            <div className="flex items-center gap-2">
+                                <span className="text-amber-300 text-lg">★</span>
+                                <h3 className="font-semibold text-sm">Quests</h3>
+                            </div>
+                            <span className="text-[10px] uppercase text-amber-300">
+                                Goals
+                            </span>
+                        </div>
+                        <div className="space-y-2 max-h-40 overflow-y-auto game-scroll">
+                            {state.quests && state.quests.length > 0 ? (
+                                state.quests.map((q) => (
+                                    <div
+                                        key={q.id}
+                                        className="border border-slate-700/80 bg-slate-950/80 rounded-md px-2.5 py-2 flex justify-between items-start gap-2"
+                                    >
+                                        <div>
+                                            <div className="text-xs font-semibold text-slate-50">
+                                                {q.title}
+                                            </div>
+                                            <div className="text-[11px] text-slate-300">
+                                                {q.desc}
+                                            </div>
+                                        </div>
+                                        <div className="flex flex-col items-end gap-1">
+                                            <span
+                                                className={
+                                                    "text-[10px] px-2 py-0.5 rounded-full " +
+                                                    (q.claimed
+                                                        ? "bg-emerald-900/70 text-emerald-300"
+                                                        : q.completed
+                                                        ? "bg-amber-900/70 text-amber-300"
+                                                        : "bg-slate-800 text-slate-300")
+                                                }
+                                            >
+                                                {q.claimed
+                                                    ? "Claimed"
+                                                    : q.completed
+                                                    ? "Ready"
+                                                    : "In progress"}
+                                            </span>
+                                            {q.completed && !q.claimed && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => claimQuest(q.id)}
+                                                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-semibold px-2.5 py-1 rounded-md active:scale-95 transition-transform"
+                                                >
+                                                    Claim
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="text-center text-slate-500 text-xs py-2">
+                                    No quests available right now.
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    <EventLog />
+                </div>
+            );
+
+            const MapView = () => {
+                const aiTargets = state.aiVillages || [];
+                const now = Date.now();
+                const incomingThreats = [...aiTargets]
+                    .filter((ai) => ai.nextAttack)
+                    .sort((a, b) => (a.nextAttack || 0) - (b.nextAttack || 0));
+                const stats = state.stats || calculateVillageStats(state);
+                const scoutingMitigation = Math.round(
+                    Math.min(0.5, (stats.scouting || 0) / 200) * 100
+                );
+
+                return (
+                    <div className="px-4 py-4 pb-24">
+                        <div className="text-center mb-4">
+                            <h2 className="text-lg font-semibold text-emerald-100">World Map</h2>
+                            <p className="text-[11px] text-slate-300">
+                                Scouts report nearby activity. Launch raids or prepare defenses.
+                            </p>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3 mb-5">
+                            <div className="bg-emerald-950/70 border border-emerald-800 rounded-xl px-3 py-3 text-left">
+                                <div className="text-[10px] uppercase text-emerald-300 tracking-wide">
+                                    Next threat
+                                </div>
+                                <div className="text-sm font-semibold text-emerald-100">
+                                    {incomingThreats[0]?.name || "Calm skies"}
+                                </div>
+                                <div className="text-[11px] text-slate-300">
+                                    {incomingThreats[0]?.nextAttack
+                                        ? formatCountdown(incomingThreats[0].nextAttack - now)
+                                        : "No movement spotted"}
+                                </div>
+                            </div>
+                            <div className="bg-slate-900/80 border border-slate-700 rounded-xl px-3 py-3 text-left">
+                                <div className="text-[10px] uppercase text-slate-400 tracking-wide">
+                                    Garrison ready
+                                </div>
+                                <div className="text-sm font-semibold text-slate-100">
+                                    {state.troops.legionnaire} Legionnaires
+                                </div>
+                                <div className="text-[11px] text-slate-400">
+                                    Defend the village or send raiding parties.
+                                </div>
+                            </div>
+                            <div className="bg-slate-950/70 border border-indigo-800 rounded-xl px-3 py-3 text-left col-span-2">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <div className="text-[10px] uppercase text-indigo-300 tracking-wide">
+                                            Fortifications
+                                        </div>
+                                        <div className="flex items-center gap-1 text-sm font-semibold text-indigo-100">
+                                            <Icons.Shield /> Defense {stats.defense || 0}
+                                        </div>
+                                    </div>
+                                    <div className="text-right text-[10px] text-indigo-200">
+                                        Scouting reduces raids by ~{scoutingMitigation}%
+                                        <div className="flex items-center gap-1 justify-end text-xs text-slate-200">
+                                            <Icons.Eye /> {stats.scouting || 0}
+                                        </div>
+                                    </div>
+                                </div>
+                                <p className="text-[11px] text-slate-300 mt-1">
+                                    Prosperity trickle: ~{Math.floor(Math.max(0, stats.prosperity || 0) * 0.4)} resources/h
+                                </p>
+                            </div>
+                        </div>
+
+                        {state.missions.length > 0 && (
+                            <div className="mb-4 space-y-2">
+                                <h3 className="text-[11px] font-semibold uppercase text-slate-300">
+                                    Active Movements
+                                </h3>
+                                {state.missions.map((m, i) => {
+                                    const remaining = Math.max(0, m.returnTime - Date.now());
+                                    return (
+                                        <div
+                                            key={m.id || i}
+                                            className="bg-sky-950/70 border border-sky-700/70 px-3 py-2 rounded-lg flex justify-between items-center"
+                                        >
+                                            <div>
+                                                <div className="font-semibold text-xs text-sky-100">
+                                                    {m.type === "raid" ? "Raiding" : "Moving"}{" "}
+                                                    {m.targetName || m.target}
+                                                </div>
+                                                <div className="text-[11px] text-sky-300">
+                                                    {m.troops} troops · {m.targetKind || "unknown"}
+                                                </div>
+                                            </div>
+                                            <div className="text-[11px] font-mono bg-sky-900/80 px-2 py-1 rounded text-sky-100">
+                                                {formatCountdown(remaining)}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+
+                        {incomingThreats.length > 0 && (
+                            <div className="mb-5">
+                                <h3 className="text-[11px] font-semibold uppercase text-slate-300 mb-2">
+                                    Incoming threats
+                                </h3>
+                                <div className="space-y-2">
+                                    {incomingThreats.slice(0, 3).map((ai) => (
+                                        <div
+                                            key={ai.id}
+                                            className="bg-amber-950/40 border border-amber-700/60 rounded-lg px-3 py-2 flex justify-between items-center"
+                                        >
+                                            <div>
+                                                <div className="text-xs font-semibold text-amber-200">
+                                                    {ai.name}
+                                                </div>
+                                                <div className="text-[11px] text-amber-300">
+                                                    Attack in {formatCountdown((ai.nextAttack || 0) - now)}
+                                                </div>
+                                            </div>
+                                            <span className="text-[10px] uppercase text-amber-300">
+                                                {ai.difficulty}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="mb-6">
+                            <div className="flex items-center justify-between mb-2">
+                                <h3 className="text-[11px] font-semibold uppercase text-slate-300">
+                                    Enemy settlements
+                                </h3>
+                                <span className="text-[10px] text-slate-500">
+                                    {aiTargets.length} known
+                                </span>
+                            </div>
+                            <div className="space-y-3">
+                                {aiTargets.map((ai) => {
+                                    const lootEstimate = RESOURCE_KEYS.reduce(
+                                        (sum, key) => sum + (ai.resources?.[key] || 0),
+                                        0
+                                    );
+                                    const cooldown = Math.max(0, (ai.raidCooldownUntil || 0) - now);
+                                    return (
+                                        <div
+                                            key={ai.id}
+                                            className="bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-3 flex flex-col gap-2 shadow-sm"
+                                        >
+                                            <div className="flex justify-between items-start">
+                                                <div>
+                                                    <div className="text-[10px] uppercase text-emerald-300 font-semibold">
+                                                        {ai.difficulty}
+                                                    </div>
+                                                    <div className="text-sm font-semibold text-slate-100">
+                                                        {ai.name}
+                                                    </div>
+                                                    <p className="text-[11px] text-slate-400">
+                                                        {ai.description}
+                                                    </p>
+                                                </div>
+                                                <div className="text-right text-[10px] text-slate-400">
+                                                    Next attack
+                                                    <div className="font-mono text-xs text-amber-300">
+                                                        {formatCountdown((ai.nextAttack || 0) - now)}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="flex flex-wrap gap-3 text-[11px] text-slate-300">
+                                                <span>Defense {ai.defense}</span>
+                                                <span>Army {ai.army}</span>
+                                                <span>Loot {formatNum(lootEstimate)}</span>
+                                                <span>Distance {ai.distance || "?"}</span>
+                                            </div>
+                                            <div className="flex justify-end">
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        sendRaid({
+                                                            id: ai.id,
+                                                            name: ai.name,
+                                                            kind: "ai",
+                                                        })
+                                                    }
+                                                    disabled={cooldown > 0}
+                                                    className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-transform active:scale-95 ${
+                                                        cooldown > 0
+                                                            ? "bg-slate-800 text-slate-500"
+                                                            : "bg-red-600 hover:bg-red-700 text-white"
+                                                    }`}
+                                                >
+                                                    {cooldown > 0
+                                                        ? `Scout ${formatCountdown(cooldown)}`
+                                                        : "Raid"}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                                {aiTargets.length === 0 && (
+                                    <div className="text-center text-slate-500 text-xs py-3">
+                                        No hostile settlements discovered yet.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="mb-6">
+                            <h3 className="text-[11px] font-semibold uppercase text-slate-300 mb-2">
+                                Neutral sites
+                            </h3>
+                            <div className="space-y-3">
+                                {NEUTRAL_TARGETS.map((site) => (
+                                    <div
+                                        key={site.id}
+                                        className="bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-3 flex items-center justify-between"
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className="text-2xl">{site.icon}</div>
+                                            <div>
+                                                <div className="text-sm font-semibold text-slate-100">
+                                                    {site.name}
+                                                </div>
+                                                <p className="text-[11px] text-slate-400">
+                                                    {site.description}
+                                                </p>
+                                                <div className="text-[10px] text-slate-500">
+                                                    {site.difficulty} · Defense {site.defense}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => sendRaid(site)}
+                                            className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-md text-xs font-semibold active:scale-95 transition-transform"
+                                        >
+                                            Raid
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="mt-5">
+                            <h3 className="text-[11px] font-semibold uppercase text-slate-300 mb-2">
+                                Latest Reports
+                            </h3>
+                            <div className="space-y-2">
+                                {state.reports.slice(0, 5).map((r) => (
+                                    <div
+                                        key={r.id}
+                                        className="bg-slate-900/80 border border-slate-700 px-3 py-2 rounded text-xs text-slate-100"
+                                    >
+                                        <div className="flex justify-between mb-1">
+                                            <span className="font-semibold">{r.title}</span>
+                                            <span className="text-[10px] text-slate-400">
+                                                {r.time}
+                                            </span>
+                                        </div>
+
+                                        {typeof r.troopsLost === "number" && (
+                                            <div className="text-[10px] text-red-300 mb-1">
+                                                Losses: {r.troopsLost}/{r.troopsSent} troops did not
+                                                return.
+                                            </div>
+                                        )}
+
+                                        <div className="flex gap-3 flex-wrap text-[11px] text-slate-200">
+                                            <span className="flex items-center gap-1">
+                                                <Icons.Wood /> {r.loot.wood}
+                                            </span>
+                                            <span className="flex items-center gap-1">
+                                                <Icons.Clay /> {r.loot.clay}
+                                            </span>
+                                            <span className="flex items-center gap-1">
+                                                <Icons.Iron /> {r.loot.iron}
+                                            </span>
+                                            <span className="flex items-center gap-1">
+                                                <Icons.Crop /> {r.loot.crop}
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))}
+                                {state.reports.length === 0 && (
+                                    <div className="text-center text-slate-500 text-xs py-3">
+                                        No reports yet. Go annoy some bandits. 🙂
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const BuildingModal = () => {
+                if (!modalOpen || !selectedSlot) return null;
+
+                const { isField, level, type, index } = selectedSlot;
+
+                // Empty village slot: choose building to construct
+                if (!type && !isField) {
+                    const buildableEntries = Object.entries(buildingTypes)
+                        .filter(([, info]) => info && info.type !== "resource")
+                        .sort(
+                            (a, b) => (a[1].order ?? 99) - (b[1].order ?? 99)
+                        );
+                    return (
+                        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60">
+                            <div className="bg-slate-950 w-full max-w-md px-4 py-4 rounded-t-2xl sm:rounded-2xl shadow-xl border border-slate-800">
+                                <div className="flex justify-between items-center mb-3">
+                                    <h3 className="text-sm font-semibold text-slate-50">
+                                        Construct Building
+                                    </h3>
+                                    <button
+                                        type="button"
+                                        onClick={() => setModalOpen(false)}
+                                        className="p-1 rounded-full hover:bg-slate-800"
+                                    >
+                                        <Icons.X />
+                                    </button>
+                                </div>
+                                <div className="space-y-3">
+                                    {buildableEntries.map(([bKey, b]) => {
+                                        if (!b) return null;
+                                        const count = state.buildings.filter(
+                                            (building) => building.type === bKey && building.level > 0
+                                        ).length;
+                                        const costs = b.cost || [0, 0, 0, 0];
+                                        const isUnique = Boolean(b.unique);
+                                        const uniqueBuilt = isUnique && count > 0;
+                                        const canAfford =
+                                            state.resources.wood >= costs[0] &&
+                                            state.resources.clay >= costs[1] &&
+                                            state.resources.iron >= costs[2] &&
+                                            state.resources.crop >= costs[3];
+
+                                        return (
+                                            <div
+                                                key={bKey}
+                                                className="border border-slate-700 rounded-lg px-3 py-2.5 flex justify-between items-center bg-slate-900/80"
+                                            >
+                                                <div className="mr-2">
+                                                    <div className="flex items-center gap-2 mb-0.5">
+                                                        <div className="font-semibold text-xs text-slate-50">
+                                                            {b.name}
+                                                        </div>
+                                                        {isUnique && (
+                                                            <span className="text-[10px] text-emerald-300 uppercase">
+                                                                Unique
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div className="text-[11px] text-slate-300 mb-1">
+                                                        {b.desc}
+                                                    </div>
+                                                    {b.effect && (
+                                                        <div className="text-[10px] text-emerald-300 mb-1">
+                                                            {b.effect}
+                                                        </div>
+                                                    )}
+                                                    <div className="flex gap-2 text-[10px] font-mono text-slate-200 flex-wrap">
+                                                        <span className="flex items-center gap-1">
+                                                            <Icons.Wood /> {costs[0]}
+                                                        </span>
+                                                        <span className="flex items-center gap-1">
+                                                            <Icons.Clay /> {costs[1]}
+                                                        </span>
+                                                        <span className="flex items-center gap-1">
+                                                            <Icons.Iron /> {costs[2]}
+                                                        </span>
+                                                        <span className="flex items-center gap-1">
+                                                            <Icons.Crop /> {costs[3]}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    disabled={!canAfford || uniqueBuilt}
+                                                    onClick={() => {
+                                                        if (!canAfford || uniqueBuilt) return;
+                                                        setState((prev) => {
+                                                            if (
+                                                                prev.resources.wood < costs[0] ||
+                                                                prev.resources.clay < costs[1] ||
+                                                                prev.resources.iron < costs[2] ||
+                                                                prev.resources.crop < costs[3]
+                                                            ) {
+                                                                return prev;
+                                                            }
+                                                            const mainLevel = getMainBuildingLevel(
+                                                                prev.buildings
+                                                            );
+                                                            const baseTime = 10000;
+                                                            const timeFactor =
+                                                                1 - Math.min(0.4, mainLevel * 0.05);
+                                                            const buildTime =
+                                                                (baseTime * timeFactor) /
+                                                                SPEED_MULTIPLIER;
+
+                                                            return {
+                                                                ...prev,
+                                                                resources: {
+                                                                    wood:
+                                                                        prev.resources.wood - costs[0],
+                                                                    clay:
+                                                                        prev.resources.clay - costs[1],
+                                                                    iron:
+                                                                        prev.resources.iron - costs[2],
+                                                                    crop:
+                                                                        prev.resources.crop - costs[3],
+                                                                },
+                                                                constQueue: [
+                                                                    ...prev.constQueue,
+                                                                    {
+                                                                        type: bKey,
+                                                                        index,
+                                                                        level: 1,
+                                                                        finishTime:
+                                                                            Date.now() + buildTime,
+                                                                        isField: false,
+                                                                    },
+                                                                ],
+                                                            };
+                                                        });
+                                                        setModalOpen(false);
+                                                    }}
+                                                    className={`text-[11px] font-semibold px-3 py-1.5 rounded-md active:scale-95 transition-transform ${
+                                                        !canAfford || uniqueBuilt
+                                                            ? "bg-slate-700 text-slate-400 cursor-not-allowed opacity-60"
+                                                            : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                                                    }`}
+                                                >
+                                                    {uniqueBuilt ? "Built" : "Build"}
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </div>
+                    );
+                }
+
+                const nextCost = getCost(type, level, buildingTypes);
+                const building = buildingTypes[type] || { name: type, desc: "" };
+
+                return (
+                    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60">
+                        <div className="bg-slate-950 w-full max-w-md px-4 py-4 rounded-t-2xl sm:rounded-2xl shadow-xl border border-slate-800">
+                            <div className="flex justify-between items-center mb-3">
+                                <div>
+                                    <h3 className="text-sm font-semibold text-slate-50">
+                                        {building.name}{" "}
+                                        <span className="text-slate-400 text-[11px]">
+                                            Level {level}
+                                        </span>
+                                    </h3>
+                                    <p className="text-[11px] text-slate-300 mt-1">
+                                        {isField
+                                            ? `Production: ${getProduction(
+                                                  type,
+                                                  level,
+                                                  buildingTypes
+                                              )} → ${getProduction(
+                                                  type,
+                                                  level + 1,
+                                                  buildingTypes
+                                              )} per hour`
+                                            : building.desc}
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setModalOpen(false)}
+                                    className="p-1 rounded-full hover:bg-slate-800"
+                                >
+                                    <Icons.X />
+                                </button>
+                            </div>
+
+                            {type === "barracks" && level > 0 && (
+                                <div className="mb-4 bg-slate-900/80 border border-slate-700 px-3 py-3 rounded-lg">
+                                    <h4 className="font-semibold text-xs text-slate-50 mb-1.5">
+                                        Train Legionnaire
+                                    </h4>
+                                    <div className="flex justify-between items-center">
+                                        <div className="text-[11px] text-slate-200">
+                                            Cost: 120{" "}
+                                            <span className="inline-flex items-center">
+                                                <Icons.Wood />
+                                            </span>{" "}
+                                            100{" "}
+                                            <span className="inline-flex items-center">
+                                                <Icons.Clay />
+                                            </span>{" "}
+                                            150{" "}
+                                            <span className="inline-flex items-center">
+                                                <Icons.Iron />
+                                            </span>{" "}
+                                            30{" "}
+                                            <span className="inline-flex items-center">
+                                                <Icons.Crop />
+                                            </span>
+                                        </div>
+                                                                                <div className="flex items-center gap-2">
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                defaultValue={5}
+                                                ref={trainInputRef}
+                                                className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs w-16 text-right"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    const raw = trainInputRef.current?.value ?? "0";
+                                                    const amt = parseInt(raw, 10);
+                                                    if (!amt || amt <= 0) {
+                                                        setTrainError("Enter a positive amount.");
+                                                        return;
+                                                    }
+                                                    const success = trainTroops(amt);
+                                                    if (success === false) {
+                                                        setTrainError("Not enough resources.");
+                                                    } else {
+                                                        setTrainError("");
+                                                    }
+                                                }}
+                                                className="bg-slate-800 hover:bg-slate-700 text-white px-3 py-1.5 rounded text-[11px] font-semibold active:scale-95 transition-transform"
+                                            >
+                                                Train
+                                            </button>
+                                        </div>
+                                        {trainError && (
+                                            <div className="text-[10px] text-red-400 mt-1">
+                                                {trainError}
+                                            </div>
+                                        )}
+
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="bg-slate-900/80 border border-slate-700 px-3 py-3 rounded-lg mb-1">
+                                <h4 className="font-semibold text-xs text-slate-50 mb-2">
+                                    Upgrade to Level {level + 1}
+                                </h4>
+                                <div className="grid grid-cols-4 gap-2 mb-3">
+                                    <div
+                                        className={`text-center ${
+                                            state.resources.wood < nextCost[0]
+                                                ? "text-red-400"
+                                                : "text-slate-100"
+                                        } text-[11px]`}
+                                    >
+                                        <div className="flex justify-center mb-0.5">
+                                            <Icons.Wood />
+                                        </div>
+                                        <span className="font-mono font-semibold">
+                                            {nextCost[0]}
+                                        </span>
+                                    </div>
+                                    <div
+                                        className={`text-center ${
+                                            state.resources.clay < nextCost[1]
+                                                ? "text-red-400"
+                                                : "text-slate-100"
+                                        } text-[11px]`}
+                                    >
+                                        <div className="flex justify-center mb-0.5">
+                                            <Icons.Clay />
+                                        </div>
+                                        <span className="font-mono font-semibold">
+                                            {nextCost[1]}
+                                        </span>
+                                    </div>
+                                    <div
+                                        className={`text-center ${
+                                            state.resources.iron < nextCost[2]
+                                                ? "text-red-400"
+                                                : "text-slate-100"
+                                        } text-[11px]`}
+                                    >
+                                        <div className="flex justify-center mb-0.5">
+                                            <Icons.Iron />
+                                        </div>
+                                        <span className="font-mono font-semibold">
+                                            {nextCost[2]}
+                                        </span>
+                                    </div>
+                                    <div
+                                        className={`text-center ${
+                                            state.resources.crop < nextCost[3]
+                                                ? "text-red-400"
+                                                : "text-slate-100"
+                                        } text-[11px]`}
+                                    >
+                                        <div className="flex justify-center mb-0.5">
+                                            <Icons.Crop />
+                                        </div>
+                                        <span className="font-mono font-semibold">
+                                            {nextCost[3]}
+                                        </span>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => upgradeBuilding(type)}
+                                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-lg text-xs font-semibold active:scale-95 transition-transform"
+                                >
+                                    Upgrade ({10 / SPEED_MULTIPLIER}s)
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const BottomNav = () => (
+                <nav className="safe-bottom bg-slate-950/95 border-t border-slate-800 flex justify-around py-2.5 px-2">
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("fields")}
+                        className={`flex flex-col items-center gap-0.5 flex-1 ${
+                            activeTab === "fields" ? "text-emerald-400" : "text-slate-400"
+                        }`}
+                    >
+                        <Icons.Crop />
+                        <span className="text-[10px] font-semibold uppercase tracking-wide">
+                            Fields
+                        </span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("village")}
+                        className={`flex flex-col items-center gap-0.5 flex-1 ${
+                            activeTab === "village" ? "text-emerald-400" : "text-slate-400"
+                        }`}
+                    >
+                        <Icons.Home />
+                        <span className="text-[10px] font-semibold uppercase tracking-wide">
+                            Village
+                        </span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("map")}
+                        className={`flex flex-col items-center gap-0.5 flex-1 ${
+                            activeTab === "map" ? "text-emerald-400" : "text-slate-400"
+                        }`}
+                    >
+                        <Icons.Map />
+                        <span className="text-[10px] font-semibold uppercase tracking-wide">
+                            Map
+                        </span>
+                    </button>
+                </nav>
+            );
+
+            return (
+                <div className="w-full h-full bg-gradient-to-b from-emerald-900 via-emerald-950 to-slate-950 flex items-stretch justify-center">
+                    <div className="w-full max-w-md h-full bg-slate-950/95 text-slate-100 shadow-[0_0_40px_rgba(0,0,0,0.8)] flex flex-col">
+                        <TopBar />
+                        <ResourceBar />
+                        <WeatherPanel />
+
+                        <main className="flex-1 overflow-y-auto overflow-x-hidden game-scroll">
+                            {activeTab === "fields" && <FieldsView />}
+                            {activeTab === "village" && <VillageView />}
+                            {activeTab === "map" && <MapView />}
+                        </main>
+
+                        <BottomNav />
+                        <BuildingModal />
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById("root"));
+        root.render(<App />);
+    </script>
+</body>
+</html>
