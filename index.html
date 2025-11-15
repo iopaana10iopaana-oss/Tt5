@@ -3018,7 +3018,7 @@
                 }
             }, [modalOpen, unitKeys.join(":"), trainInputRef]);
 
-            const checkRequirement = (unit) => {
+            const checkRequirement = (unit, state) => {
                 if (!unit) return false;
                 const requirements = Array.isArray(unit.requires)
                     ? unit.requires
@@ -3168,7 +3168,7 @@
                                         const info = unitTypes[selectedUnit];
                                         if (!info) return null;
                                         const cost = info.cost || {};
-                                        const requirementMet = checkRequirement(info);
+                                        const requirementMet = checkRequirement(info, state);
                                         const requirements = Array.isArray(info.requires)
                                             ? info.requires
                                             : info.requires
