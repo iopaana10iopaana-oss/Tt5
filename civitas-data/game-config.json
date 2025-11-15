@@ -146,6 +146,86 @@
       "unique": true
     }
   },
+  "unitTypes": {
+    "legionnaire": {
+      "name": "Legionnaire",
+      "role": "All-purpose infantry that anchors basic armies.",
+      "class": "infantry",
+      "stats": { "attack": 35, "defense": 45, "speed": 6, "range": 0 },
+      "cost": { "wood": 120, "clay": 100, "iron": 150, "crop": 60 },
+      "upkeep": 1,
+      "trainingTime": 9000,
+      "carry": 40,
+      "requires": { "building": "barracks", "level": 1 },
+      "bonusVsClass": { "raider": 0.1 },
+      "raidBonus": 0
+    },
+    "spearman": {
+      "name": "Spearman",
+      "role": "Defensive infantry that excels against cavalry.",
+      "class": "infantry",
+      "stats": { "attack": 25, "defense": 60, "speed": 5, "range": 0 },
+      "cost": { "wood": 100, "clay": 120, "iron": 90, "crop": 50 },
+      "upkeep": 1,
+      "trainingTime": 8500,
+      "carry": 30,
+      "requires": { "building": "barracks", "level": 2 },
+      "bonusVsClass": { "cavalry": 0.25 },
+      "raidBonus": -0.1
+    },
+    "archer": {
+      "name": "Archer",
+      "role": "Ranged unit that supports from afar.",
+      "class": "ranged",
+      "stats": { "attack": 45, "defense": 25, "speed": 7, "range": 3 },
+      "cost": { "wood": 140, "clay": 80, "iron": 120, "crop": 70 },
+      "upkeep": 1,
+      "trainingTime": 10000,
+      "carry": 25,
+      "requires": { "building": "academy", "level": 1 },
+      "bonusVsClass": { "infantry": 0.15 },
+      "raidBonus": 0
+    },
+    "raider": {
+      "name": "Raider",
+      "role": "Fast cavalry that focuses on plunder.",
+      "class": "cavalry",
+      "stats": { "attack": 40, "defense": 20, "speed": 10, "range": 0 },
+      "cost": { "wood": 160, "clay": 120, "iron": 200, "crop": 80 },
+      "upkeep": 2,
+      "trainingTime": 11000,
+      "carry": 80,
+      "requires": { "building": "barracks", "level": 3 },
+      "bonusVsClass": { "ranged": 0.1 },
+      "raidBonus": 0.35
+    },
+    "sentinel": {
+      "name": "Sentinel",
+      "role": "Elite guard that boosts fortification defense.",
+      "class": "infantry",
+      "stats": { "attack": 55, "defense": 80, "speed": 5, "range": 0 },
+      "cost": { "wood": 220, "clay": 260, "iron": 200, "crop": 90 },
+      "upkeep": 2,
+      "trainingTime": 14000,
+      "carry": 30,
+      "requires": { "building": "palisade", "level": 1 },
+      "bonusVsClass": { "cavalry": 0.15, "raider": 0.1 },
+      "raidBonus": -0.15
+    },
+    "scout": {
+      "name": "Scout",
+      "role": "Recon unit that travels fast to gather intel.",
+      "class": "support",
+      "stats": { "attack": 5, "defense": 10, "speed": 12, "range": 0 },
+      "cost": { "wood": 80, "clay": 50, "iron": 70, "crop": 40 },
+      "upkeep": 1,
+      "trainingTime": 6000,
+      "carry": 10,
+      "requires": { "building": "watchtower", "level": 1 },
+      "bonusVsClass": {},
+      "raidBonus": 0.1
+    }
+  },
   "aiOpponents": [
     {
       "id": "bandit-camp",
@@ -161,7 +241,12 @@
       "regen": { "wood": 4, "clay": 2, "iron": 1, "crop": 2 },
       "attackInterval": [120000, 210000],
       "attackForce": [6, 12],
-      "personality": "Opportunists"
+      "personality": "Opportunists",
+      "armyProfile": {
+        "weights": { "legionnaire": 0.4, "raider": 0.35, "spearman": 0.25 },
+        "baseArmySize": 12,
+        "preferredRaiders": true
+      }
     },
     {
       "id": "iron-tribe",
@@ -177,7 +262,13 @@
       "regen": { "wood": 3, "clay": 3, "iron": 5, "crop": 3 },
       "attackInterval": [180000, 300000],
       "attackForce": [10, 18],
-      "personality": "Disciplined"
+      "personality": "Disciplined",
+      "armyProfile": {
+        "weights": { "legionnaire": 0.25, "spearman": 0.35, "archer": 0.25, "sentinel": 0.15 },
+        "baseArmySize": 20,
+        "minWave": 0.6,
+        "maxWave": 1.3
+      }
     },
     {
       "id": "dune-king",
@@ -193,7 +284,14 @@
       "regen": { "wood": 5, "clay": 5, "iron": 4, "crop": 6 },
       "attackInterval": [240000, 360000],
       "attackForce": [16, 26],
-      "personality": "Relentless"
+      "personality": "Relentless",
+      "armyProfile": {
+        "weights": { "legionnaire": 0.2, "spearman": 0.2, "archer": 0.2, "raider": 0.2, "sentinel": 0.2 },
+        "baseArmySize": 30,
+        "siegePreference": 0.4,
+        "minWave": 0.8,
+        "maxWave": 1.5
+      }
     }
   ],
   "initialState": {
@@ -236,7 +334,14 @@
       { "type": null, "level": 0, "id": "b8" }
     ],
     "constQueue": [],
-    "troops": { "legionnaire": 0 },
+    "troops": {
+      "legionnaire": 0,
+      "spearman": 0,
+      "archer": 0,
+      "raider": 0,
+      "sentinel": 0,
+      "scout": 0
+    },
     "trainingQueue": [],
     "missions": [],
     "reports": [],
