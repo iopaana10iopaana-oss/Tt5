@@ -157,7 +157,7 @@
       "trainingTime": 9000,
       "carry": 40,
       "requires": { "building": "barracks", "level": 1 },
-      "bonusVsClass": { "raider": 0.1 },
+      "bonusVsClass": { "cavalry": 0.1 },
       "raidBonus": 0
     },
     "spearman": {
@@ -209,7 +209,7 @@
       "trainingTime": 14000,
       "carry": 30,
       "requires": { "building": "palisade", "level": 1 },
-      "bonusVsClass": { "cavalry": 0.15, "raider": 0.1 },
+      "bonusVsClass": { "cavalry": 0.25 },
       "raidBonus": -0.15
     },
     "scout": {

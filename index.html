@@ -347,6 +347,38 @@
         const DEFAULT_AI_STOCKPILE = { wood: 400, clay: 350, iron: 320, crop: 350 };
         const MIN_RAID_TRAVEL_TIME = 8000;
         const RESOURCE_KEYS = ["wood", "clay", "iron", "crop"];
+        const ROLE_WEIGHTS = {
+            infantry: 1.15,
+            cavalry: 1,
+            ranged: 0.85,
+            support: 0.5,
+        };
+        const TACTIC_PROFILES = {
+            standard: {
+                key: "standard",
+                label: "Standard",
+                attackMod: 1,
+                casualtyMod: 1,
+                lootMod: 1,
+                description: "Balanced approach suitable for most raids.",
+            },
+            skirmish: {
+                key: "skirmish",
+                label: "Skirmish",
+                attackMod: 0.9,
+                casualtyMod: 0.75,
+                lootMod: 0.9,
+                description: "Quick strikes that favor lower losses.",
+            },
+            assault: {
+                key: "assault",
+                label: "Assault",
+                attackMod: 1.2,
+                casualtyMod: 1.25,
+                lootMod: 1.1,
+                description: "All-out push for maximum damage and loot.",
+            },
+        };
 
         const NEUTRAL_TARGETS = [
             {
@@ -401,11 +433,274 @@
             crop: Math.max(0, Math.floor(seed.crop || 0)),
         });
 
+        const getResourceTotal = (resources = {}) =>
+            RESOURCE_KEYS.reduce((sum, key) => sum + Math.max(0, resources[key] || 0), 0);
+
         const randomBetween = (min = 0, max = 0) => {
             if (typeof min !== "number") min = 0;
             if (typeof max !== "number") max = min;
             if (max <= min) return Math.floor(min);
             return Math.floor(Math.random() * (max - min + 1)) + Math.floor(min);
+        };
+
+        const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+        const getUnitTypes = (data) => (data && data.unitTypes) || {};
+
+        const ensureTroopTemplate = (troops = {}, unitTypes = {}) => {
+            const ensured = {};
+            Object.keys(unitTypes).forEach((unitId) => {
+                ensured[unitId] = Math.max(0, Math.floor(troops?.[unitId] || 0));
+            });
+            Object.keys(troops || {}).forEach((unitId) => {
+                if (!(unitId in ensured)) {
+                    ensured[unitId] = Math.max(0, Math.floor(troops[unitId] || 0));
+                }
+            });
+            return ensured;
+        };
+
+        const sumArmy = (army = {}) =>
+            Object.values(army || {}).reduce((sum, count) => sum + Math.max(0, count || 0), 0);
+
+        const cloneArmy = (army = {}) => {
+            const copy = {};
+            Object.keys(army || {}).forEach((unitId) => {
+                copy[unitId] = Math.max(0, Math.floor(army[unitId] || 0));
+            });
+            return copy;
+        };
+
+        const composeArmyFromProfile = (profile = {}, total = 0, unitTypes = {}) => {
+            const weightSource = profile.weights || profile || {};
+            const ignoredKeys = new Set([
+                "baseArmySize",
+                "minWave",
+                "maxWave",
+                "preferredRaiders",
+                "siegePreference",
+            ]);
+            const entries = Object.entries(weightSource).filter(([unitId, weight]) => {
+                if (ignoredKeys.has(unitId)) return false;
+                return weight > 0 && (unitTypes[unitId] || unitId === "legionnaire");
+            });
+            if (!entries.length) return { legionnaire: Math.max(0, Math.floor(total)) };
+            const weightSum = entries.reduce((sum, [, weight]) => sum + weight, 0) || 1;
+            const army = {};
+            entries.forEach(([unitId, weight], index) => {
+                const amount = Math.max(
+                    0,
+                    index === entries.length - 1
+                        ? Math.round(total - sumArmy(army))
+                        : Math.round((weight / weightSum) * total)
+                );
+                if (amount > 0) army[unitId] = amount;
+            });
+            return army;
+        };
+
+        const getArmyClassTotals = (army = {}, unitTypes = {}) => {
+            const totals = {};
+            Object.entries(army || {}).forEach(([unitId, count]) => {
+                if (!count) return;
+                const meta = unitTypes[unitId];
+                const cls = meta?.class || "infantry";
+                totals[cls] = (totals[cls] || 0) + count;
+            });
+            return totals;
+        };
+
+        const computeArmyAttack = (army, enemyClassTotals, unitTypes, tactic = TACTIC_PROFILES.standard) => {
+            const totalEnemy = Object.values(enemyClassTotals || {}).reduce(
+                (sum, value) => sum + value,
+                0
+            );
+            let total = 0;
+            Object.entries(army || {}).forEach(([unitId, count]) => {
+                if (!count) return;
+                const meta = unitTypes[unitId];
+                if (!meta) return;
+                const base = (meta.stats?.attack || 0) * count;
+                let bonus = 0;
+                const bonuses = meta.bonusVsClass || {};
+                Object.entries(bonuses).forEach(([targetClass, bonusValue]) => {
+                    if (!bonusValue || !enemyClassTotals[targetClass]) return;
+                    const share = totalEnemy > 0 ? enemyClassTotals[targetClass] / totalEnemy : 0;
+                    bonus += base * bonusValue * share;
+                });
+                total += base + bonus;
+            });
+            return total * (tactic?.attackMod || 1);
+        };
+
+        const computeArmyDefense = (army, unitTypes) => {
+            let total = 0;
+            Object.entries(army || {}).forEach(([unitId, count]) => {
+                if (!count) return;
+                const meta = unitTypes[unitId];
+                if (!meta) return;
+                total += (meta.stats?.defense || 0) * count;
+            });
+            return total;
+        };
+
+        const distributeCasualties = (army, lossRate, unitTypes) => {
+            const totalUnits = sumArmy(army);
+            const targetLosses = Math.min(totalUnits, Math.round(totalUnits * lossRate));
+            const survivors = {};
+            const losses = {};
+            if (targetLosses <= 0) {
+                Object.entries(army || {}).forEach(([unitId, count]) => {
+                    survivors[unitId] = Math.max(0, count || 0);
+                    losses[unitId] = 0;
+                });
+                return { survivors, losses };
+            }
+
+            const entries = Object.entries(army || {});
+            let totalWeight = 0;
+            const weights = {};
+            entries.forEach(([unitId, count]) => {
+                const meta = unitTypes[unitId];
+                const role = meta?.class || "infantry";
+                const weight = (ROLE_WEIGHTS[role] || 1) * Math.max(0, count || 0);
+                weights[unitId] = weight;
+                totalWeight += weight;
+            });
+
+            let remaining = targetLosses;
+            entries.forEach(([unitId, count], index) => {
+                const available = Math.max(0, count || 0);
+                if (!available) {
+                    survivors[unitId] = 0;
+                    losses[unitId] = 0;
+                    return;
+                }
+                let loss = 0;
+                if (totalWeight > 0) {
+                    loss = Math.min(
+                        available,
+                        index === entries.length - 1
+                            ? remaining
+                            : Math.round((weights[unitId] / totalWeight) * targetLosses)
+                    );
+                }
+                loss = Math.min(loss, remaining, available);
+                survivors[unitId] = available - loss;
+                losses[unitId] = loss;
+                remaining -= loss;
+            });
+
+            return { survivors, losses };
+        };
+
+        const calculateCarryCapacity = (army, unitTypes) => {
+            let totalCarry = 0;
+            Object.entries(army || {}).forEach(([unitId, count]) => {
+                const meta = unitTypes[unitId];
+                if (!meta || !count) return;
+                const carry = meta.carry || 0;
+                const raidBonus = meta.raidBonus || 0;
+                totalCarry += count * carry * (1 + raidBonus);
+            });
+            return totalCarry;
+        };
+
+        const calculateArmyAttackPower = (army, unitTypes) => {
+            let total = 0;
+            Object.entries(army || {}).forEach(([unitId, count]) => {
+                if (!count) return;
+                const meta = unitTypes[unitId];
+                if (!meta) return;
+                total += (meta.stats?.attack || 0) * count;
+            });
+            return total;
+        };
+
+        const getArmySlowestSpeed = (army, unitTypes) => {
+            const speeds = [];
+            Object.entries(army || {}).forEach(([unitId, count]) => {
+                if (!count) return;
+                const meta = unitTypes[unitId];
+                if (!meta || !meta.stats) return;
+                const speed = meta.stats.speed;
+                if (speed) speeds.push(speed);
+            });
+            if (!speeds.length) return 6;
+            return Math.min(...speeds);
+        };
+
+        const resolveBattle = (
+            attackerArmy = {},
+            defenderArmy = {},
+            options = {}
+        ) => {
+            const unitTypes = options.unitTypes || {};
+            const attackerTactic =
+                TACTIC_PROFILES[options.tactic] || TACTIC_PROFILES.standard;
+            const defenderTactic =
+                TACTIC_PROFILES[options.defenderTactic] || TACTIC_PROFILES.standard;
+
+            const attackerClasses = getArmyClassTotals(attackerArmy, unitTypes);
+            const defenderClasses = getArmyClassTotals(defenderArmy, unitTypes);
+
+            const attackerAttack = computeArmyAttack(
+                attackerArmy,
+                defenderClasses,
+                unitTypes,
+                attackerTactic
+            );
+            const defenderAttack = computeArmyAttack(
+                defenderArmy,
+                attackerClasses,
+                unitTypes,
+                defenderTactic
+            );
+            const attackerDefense = computeArmyDefense(attackerArmy, unitTypes);
+            const defenderDefense =
+                computeArmyDefense(defenderArmy, unitTypes) +
+                Math.max(0, options.defenderFortification || 0);
+
+            const attackerEdge = attackerAttack / Math.max(1, defenderDefense);
+            const defenderEdge = defenderAttack / Math.max(1, attackerDefense || 1);
+            const edgeSum = Math.max(attackerEdge + defenderEdge, 0.2);
+
+            let attackerLossRate = 0.15 + 0.6 * (defenderEdge / edgeSum);
+            let defenderLossRate = 0.15 + 0.6 * (attackerEdge / edgeSum);
+
+            attackerLossRate = clamp(attackerLossRate * (attackerTactic.casualtyMod || 1), 0.03, 0.98);
+            defenderLossRate = clamp(defenderLossRate, 0.03, 0.98);
+
+            const attackerResult = distributeCasualties(attackerArmy, attackerLossRate, unitTypes);
+            const defenderResult = distributeCasualties(defenderArmy, defenderLossRate, unitTypes);
+
+            const attackerSurvivors = attackerResult.survivors;
+            const defenderSurvivors = defenderResult.survivors;
+            const attackerTotalSurvivors = sumArmy(attackerSurvivors);
+            const defenderTotalSurvivors = sumArmy(defenderSurvivors);
+
+            const lootCapacity =
+                calculateCarryCapacity(attackerSurvivors, unitTypes) *
+                (attackerTactic.lootMod || 1);
+
+            return {
+                attacker: {
+                    survivors: attackerSurvivors,
+                    losses: attackerResult.losses,
+                    totalSurvivors: attackerTotalSurvivors,
+                    totalLosses: sumArmy(attackerResult.losses),
+                },
+                defender: {
+                    survivors: defenderSurvivors,
+                    losses: defenderResult.losses,
+                    totalSurvivors: defenderTotalSurvivors,
+                    totalLosses: sumArmy(defenderResult.losses),
+                },
+                lootCapacity: Math.max(0, Math.floor(lootCapacity)),
+                tactic: attackerTactic.key,
+                attackerEdge,
+                defenderEdge,
+            };
         };
 
         const buildAiVillagesFromConfig = (data, savedVillages = []) => {
@@ -443,6 +738,12 @@
                     description: template.description || saved?.description || "",
                     difficulty: template.difficulty || saved?.difficulty || "Unknown",
                     army: saved?.army ?? template.army ?? 12,
+                    armyStrength:
+                        saved?.armyStrength ??
+                        saved?.army ??
+                        template.armyStrength ??
+                        template.army ??
+                        12,
                     defense: saved?.defense ?? template.defense ?? template.army ?? 12,
                     distance: template.distance || saved?.distance || 10,
                     travelTime: template.travelTime || saved?.travelTime || 22000,
@@ -459,6 +760,8 @@
                     raidCooldownUntil: saved?.raidCooldownUntil || 0,
                     personality:
                         template.personality || saved?.personality || "Unpredictable",
+                    armyProfile:
+                        template.armyProfile || saved?.armyProfile || { weights: { legionnaire: 1 } },
                 };
             });
         };
@@ -508,6 +811,7 @@
                 level: 0,
                 id: `field-${index}`,
             }));
+            const unitTypes = getUnitTypes(data);
 
             const baseState = {
                 resources:
@@ -536,7 +840,7 @@
                         { type: null, level: 0, id: "b8" },
                     ],
                 constQueue: template.constQueue || [],
-                troops: template.troops || { legionnaire: 0 },
+                troops: ensureTroopTemplate(template.troops || {}, unitTypes),
                 trainingQueue: template.trainingQueue || [],
                 missions: template.missions || [],
                 reports: template.reports || [],
@@ -548,8 +852,9 @@
             return baseState;
         };
 
-        const mergeStateWithDefaults = (saved, base) => {
+        const mergeStateWithDefaults = (saved, base, data) => {
             if (!saved) return base;
+            const unitTypes = getUnitTypes(data);
             const merged = {
                 ...base,
                 ...saved,
@@ -575,6 +880,11 @@
                     base.aiVillages || []
                 ),
             };
+            merged.troops = ensureTroopTemplate(merged.troops, unitTypes);
+            merged.trainingQueue = (merged.trainingQueue || []).map((entry) => ({
+                ...entry,
+                unitType: entry.unitType || entry.type || "legionnaire",
+            }));
             merged.stats = saved.stats || calculateVillageStats(merged);
             return merged;
         };
@@ -674,6 +984,7 @@
             if (!prev) return prev;
             const now = Date.now();
             const next = { ...prev };
+            const unitTypes = getUnitTypes(gameData);
 
             next.events = next.events || [];
             next.council = next.council || { activeUntil: 0, cooldownUntil: 0 };
@@ -687,11 +998,14 @@
             next.fields = next.fields || [];
             next.buildings = next.buildings || [];
             next.constQueue = next.constQueue || [];
-            next.trainingQueue = next.trainingQueue || [];
+            next.trainingQueue = (next.trainingQueue || []).map((entry) => ({
+                ...entry,
+                unitType: entry.unitType || entry.type || "legionnaire",
+            }));
             next.missions = next.missions || [];
             next.reports = next.reports || [];
             next.quests = next.quests || [];
-            next.troops = next.troops || { legionnaire: 0 };
+            next.troops = ensureTroopTemplate(next.troops, unitTypes);
             next.aiVillages = next.aiVillages || [];
             if (!next.aiVillages.length) {
                 next.aiVillages = buildAiVillagesFromConfig(gameData);
@@ -715,7 +1029,13 @@
 
             const prod = calculateHourlyProduction(next, gameData, now);
 
-            const troopUpkeep = next.troops.legionnaire || 0;
+            const troopUpkeep = Object.entries(next.troops || {}).reduce(
+                (sum, [unitId, count]) => {
+                    const upkeep = unitTypes[unitId]?.upkeep || 0;
+                    return sum + upkeep * (count || 0);
+                },
+                0
+            );
             const popUpkeep = next.population || 0;
             const netCrop = prod.crop - troopUpkeep - popUpkeep;
 
@@ -781,7 +1101,9 @@
             });
 
             completedTraining.forEach((q) => {
-                next.troops.legionnaire += q.amount;
+                const unitType = q.unitType || q.type || "legionnaire";
+                if (!next.troops[unitType]) next.troops[unitType] = 0;
+                next.troops[unitType] += q.amount;
             });
 
             const returningMissions = [];
@@ -819,170 +1141,197 @@
                     time: new Date().toLocaleTimeString(),
                 };
 
+                const missionArmySeed =
+                    (m.army && Object.keys(m.army || {}).length && m.army) ||
+                    { legionnaire: m.troops || 0 };
+                const attackerArmy = {};
+                Object.keys(unitTypes).forEach((unitId) => {
+                    const value = Math.max(0, Math.floor(missionArmySeed?.[unitId] || 0));
+                    if (value > 0) attackerArmy[unitId] = value;
+                });
+                if (!Object.keys(attackerArmy).length && m.troops) {
+                    const fallback = Math.max(0, Math.floor(m.troops));
+                    if (fallback > 0) attackerArmy.legionnaire = fallback;
+                }
+                const totalSent = sumArmy(attackerArmy);
+                if (!totalSent) return;
+
+                const tacticKey = TACTIC_PROFILES[m.tactic]?.key || "standard";
+
+                const addSurvivors = (survivors) => {
+                    Object.entries(survivors || {}).forEach(([unitId, count]) => {
+                        if (!count) return;
+                        if (!next.troops[unitId]) next.troops[unitId] = 0;
+                        next.troops[unitId] += count;
+                    });
+                };
+
+                const formatLootValue = (lootObj) =>
+                    RESOURCE_KEYS.reduce((sum, key) => sum + (lootObj[key] || 0), 0);
+
+                const recordReport = (battle, loot) => {
+                    next.reports.unshift({
+                        ...baseReport,
+                        loot,
+                        tactic: battle.tactic,
+                        attackers: {
+                            sent: attackerArmy,
+                            losses: battle.attacker.losses,
+                            survivors: battle.attacker.survivors,
+                        },
+                        defenders: {
+                            name: label,
+                            losses: battle.defender.losses,
+                            survivors: battle.defender.survivors,
+                        },
+                        troopsSent: totalSent,
+                        troopsLost: battle.attacker.totalLosses,
+                        troopsReturned: battle.attacker.totalSurvivors,
+                    });
+                };
+
+                const pushRaidEvent = (battle, loot, prefix = "") => {
+                    const lootValue = formatLootValue(loot);
+                    const lootText = lootValue > 0 ? ` with ${formatNum(lootValue)} loot` : "";
+                    const message =
+                        prefix ||
+                        `${battle.attacker.totalSurvivors}/${totalSent} troops returned from ${label}${lootText}.`;
+                    next.events = pushEvent(next.events, message.trim(), "raid");
+                };
+
                 if (m.targetKind === "ai") {
                     const aiIndex = next.aiVillages.findIndex(
                         (vill) => vill.id === m.targetId
                     );
                     const ai = aiIndex >= 0 ? next.aiVillages[aiIndex] : null;
+                    const aiDefense = ai ? Math.max(0, ai.defense || 0) : m.targetDefense || 0;
+                    const aiStrength = ai
+                        ? Math.max(4, ai.armyStrength || ai.army || 10)
+                        : Math.max(4, m.targetDefense || 8);
+                    const defenderArmy = ai
+                        ? composeArmyFromProfile(ai.armyProfile, aiStrength, unitTypes)
+                        : { legionnaire: aiStrength };
+                    const battle = resolveBattle(attackerArmy, defenderArmy, {
+                        unitTypes,
+                        tactic: tacticKey,
+                        defenderFortification: aiDefense,
+                    });
+                    addSurvivors(battle.attacker.survivors);
+
                     const loot = cloneResources();
-                    let troopsLost = Math.max(1, Math.floor(m.troops * 0.3));
-                    let survivors = Math.max(0, m.troops - troopsLost);
-
-                    if (ai) {
-                        const aiDefense = Math.max(
-                            5,
-                            Math.round(
-                                (ai.defense || ai.army || 10) *
-                                    (0.8 + Math.random() * 0.6)
-                            )
-                        );
-
-                        if (m.troops > aiDefense) {
-                            troopsLost = Math.max(
-                                1,
-                                Math.floor(
-                                    m.troops *
-                                        (0.25 + aiDefense / Math.max(1, m.troops + aiDefense))
-                                )
-                            );
-                            survivors = Math.max(0, m.troops - troopsLost);
-                            const updatedResources = cloneResources(ai.resources);
-
-                            RESOURCE_KEYS.forEach((key) => {
-                                const available = updatedResources[key];
-                                const haul = Math.min(
-                                    available,
-                                    Math.floor(
-                                        available *
-                                            (survivors / Math.max(1, ai.army)) *
-                                            (0.4 + Math.random() * 0.4)
+                    let lootCapacity = battle.lootCapacity;
+                    if (ai && lootCapacity > 0) {
+                        const updatedResources = cloneResources(ai.resources);
+                        const totalAvailable = formatLootValue(updatedResources);
+                        RESOURCE_KEYS.forEach((key, idx) => {
+                            if (!lootCapacity || !totalAvailable) {
+                                loot[key] = 0;
+                                return;
+                            }
+                            const available = updatedResources[key] || 0;
+                            if (!available) {
+                                loot[key] = 0;
+                                return;
+                            }
+                            let share = available / totalAvailable;
+                            let take = Math.min(available, Math.floor(lootCapacity * share));
+                            if (idx === RESOURCE_KEYS.length - 1) {
+                                take = Math.min(available, lootCapacity);
+                            }
+                            loot[key] = take;
+                            updatedResources[key] = Math.max(0, available - take);
+                            lootCapacity -= take;
+                        });
+                        const defenderLosses = battle.defender.totalLosses || 0;
+                        next.aiVillages = next.aiVillages.map((vill, idx) => {
+                            if (idx !== aiIndex) return vill;
+                            return {
+                                ...vill,
+                                resources: updatedResources,
+                                armyStrength: Math.max(
+                                    5,
+                                    Math.round(
+                                        Math.max(0, (vill.armyStrength || vill.army || 10) - defenderLosses)
                                     )
-                                );
-                                loot[key] = haul;
-                                updatedResources[key] = Math.max(0, available - haul);
-                            });
-
-                            next.aiVillages = next.aiVillages.map((vill, idx) =>
-                                idx === aiIndex
-                                    ? {
-                                          ...vill,
-                                          resources: updatedResources,
-                                          army: Math.max(
-                                              5,
-                                              Math.round(vill.army - troopsLost * 0.4)
-                                          ),
-                                          defense: Math.max(
-                                              5,
-                                              Math.round(vill.defense - troopsLost * 0.2)
-                                          ),
-                                      }
-                                    : vill
-                            );
-
-                            depositLoot(loot);
-                            next.events = pushEvent(
-                                next.events,
-                                `${survivors}/${m.troops} Legionnaires plundered ${ai.name}.`,
-                                "raid"
-                            );
-                        } else {
-                            const casualtyRate = Math.min(
-                                0.95,
-                                0.5 + aiDefense / Math.max(1, m.troops * 2)
-                            );
-                            troopsLost = Math.max(1, Math.floor(m.troops * casualtyRate));
-                            survivors = Math.max(0, m.troops - troopsLost);
-                            next.events = pushEvent(
-                                next.events,
-                                `${ai.name} held firm. ${survivors}/${m.troops} returned.`,
-                                "raid"
-                            );
-                        }
-                    } else {
+                                ),
+                                army: Math.max(
+                                    5,
+                                    Math.round(
+                                        Math.max(0, (vill.army || vill.armyStrength || 10) - defenderLosses * 0.6)
+                                    )
+                                ),
+                                defense: Math.max(
+                                    5,
+                                    Math.round(Math.max(0, (vill.defense || 10) - defenderLosses * 0.3))
+                                ),
+                            };
+                        });
+                    }
+                    if (formatLootValue(loot) > 0) {
                         depositLoot(loot);
                     }
-
-                    next.troops.legionnaire += survivors;
-                    next.reports.unshift({
-                        ...baseReport,
-                        loot,
-                        troopsSent: m.troops,
-                        troopsLost,
-                        troopsReturned: survivors,
-                    });
+                    pushRaidEvent(battle, loot);
+                    recordReport(battle, loot);
                     return;
                 }
 
                 if (m.targetKind === "neutral") {
-                    const defense = m.targetDefense || 6;
+                    const defense = Math.max(4, m.targetDefense || 6);
+                    const defenderArmy = composeArmyFromProfile(
+                        { weights: { legionnaire: 0.6, spearman: 0.4 } },
+                        defense,
+                        unitTypes
+                    );
                     const lootRange = m.lootRange || [60, 140];
-                    const casualtyRate = Math.min(
-                        0.8,
-                        0.25 + defense / Math.max(10, m.troops * 3)
-                    );
-                    const troopsLost = Math.max(
-                        0,
-                        Math.floor(m.troops * (0.2 + Math.random() * casualtyRate))
-                    );
-                    const survivors = Math.max(0, m.troops - troopsLost);
+                    const battle = resolveBattle(attackerArmy, defenderArmy, {
+                        unitTypes,
+                        tactic: tacticKey,
+                        defenderFortification: defense,
+                    });
+                    addSurvivors(battle.attacker.survivors);
                     const loot = cloneResources();
-
-                    if (survivors > 0) {
-                        const baseLoot = randomBetween(lootRange[0], lootRange[1]);
-                        const totalLoot = Math.floor(baseLoot * (1 + survivors / 6));
-                        RESOURCE_KEYS.forEach((key) => {
-                            loot[key] = Math.max(
-                                0,
-                                Math.floor(
-                                    (totalLoot / RESOURCE_KEYS.length) *
-                                        (0.7 + Math.random() * 0.6)
-                                )
-                            );
-                        });
+                    const potentialLoot = randomBetween(lootRange[0], lootRange[1]);
+                    let haul = Math.min(battle.lootCapacity, potentialLoot);
+                    RESOURCE_KEYS.forEach((key, idx) => {
+                        if (haul <= 0) {
+                            loot[key] = 0;
+                            return;
+                        }
+                        let take = Math.floor(haul / (RESOURCE_KEYS.length - idx));
+                        loot[key] = Math.max(0, take);
+                        haul -= take;
+                    });
+                    if (formatLootValue(loot) > 0) {
                         depositLoot(loot);
                     }
-
-                    next.troops.legionnaire += survivors;
-                    next.reports.unshift({
-                        ...baseReport,
-                        loot,
-                        troopsSent: m.troops,
-                        troopsLost,
-                        troopsReturned: survivors,
-                    });
-                    next.events = pushEvent(
-                        next.events,
-                        `${survivors}/${m.troops} Legionnaires returned from ${label}.`,
-                        "raid"
-                    );
+                    pushRaidEvent(battle, loot);
+                    recordReport(battle, loot);
                     return;
                 }
 
-                // Legacy raids fallback
-                const casualtyRate = 0.1 + Math.random() * 0.25;
-                const lost = Math.floor(m.troops * casualtyRate);
-                const survivors = Math.max(0, m.troops - lost);
-                const loot = {
-                    wood: Math.floor(Math.random() * 80 * survivors),
-                    clay: Math.floor(Math.random() * 80 * survivors),
-                    iron: Math.floor(Math.random() * 80 * survivors),
-                    crop: Math.floor(Math.random() * 80 * survivors),
-                };
-
-                depositLoot(loot);
-                next.troops.legionnaire += survivors;
-                next.reports.unshift({
-                    ...baseReport,
-                    loot,
-                    troopsSent: m.troops,
-                    troopsLost: lost,
-                    troopsReturned: survivors,
+                const defenderArmy = { legionnaire: Math.max(4, m.targetDefense || 8) };
+                const battle = resolveBattle(attackerArmy, defenderArmy, {
+                    unitTypes,
+                    tactic: tacticKey,
+                    defenderFortification: m.targetDefense || 0,
                 });
-                next.events = pushEvent(
-                    next.events,
-                    `${survivors}/${m.troops} Legionnaires returned from ${label}.`,
-                    "raid"
-                );
+                addSurvivors(battle.attacker.survivors);
+                const loot = cloneResources();
+                let haul = Math.min(battle.lootCapacity, 200);
+                RESOURCE_KEYS.forEach((key, idx) => {
+                    if (haul <= 0) {
+                        loot[key] = 0;
+                        return;
+                    }
+                    const take = Math.floor(haul / (RESOURCE_KEYS.length - idx));
+                    loot[key] = take;
+                    haul -= take;
+                });
+                if (formatLootValue(loot) > 0) {
+                    depositLoot(loot);
+                }
+                pushRaidEvent(battle, loot);
+                recordReport(battle, loot);
             });
 
             next.aiVillages = next.aiVillages.map((ai) => {
@@ -999,111 +1348,110 @@
                 let updated = { ...ai, resources };
                 if (ai.nextAttack && ai.nextAttack <= now) {
                     const interval = ai.attackInterval || DEFAULT_AI_ATTACK_INTERVAL;
-                    const forceRange = ai.attackForceRange || DEFAULT_AI_ATTACK_FORCE;
+                    const profile = ai.armyProfile || { weights: { legionnaire: 1 } };
+                    const baseStrength = Math.max(
+                        4,
+                        ai.armyStrength ||
+                            profile.baseArmySize ||
+                            ai.army ||
+                            10
+                    );
+                    const minWave =
+                        typeof profile.minWave === "number" ? profile.minWave : 0.6;
+                    const maxWave =
+                        typeof profile.maxWave === "number" ? profile.maxWave : 1.2;
+                    const waveRange = Math.max(0.1, maxWave - minWave);
+                    const waveMultiplier = minWave + Math.random() * waveRange;
                     const attackTroops = Math.max(
                         3,
-                        randomBetween(forceRange[0], forceRange[1])
+                        Math.round(baseStrength * waveMultiplier)
                     );
-                    const defenders = next.troops.legionnaire || 0;
+                    const attackerArmy = composeArmyFromProfile(
+                        profile,
+                        attackTroops,
+                        unitTypes
+                    );
+                    const defenderArmy = cloneArmy(next.troops);
                     const stats = next.stats || calculateVillageStats(next);
-                    const defenseBoost = Math.floor((stats.defense || 0) / 6);
-                    const scoutingReduction = Math.min(
-                        0.5,
-                        (stats.scouting || 0) / 200
+                    const battle = resolveBattle(attackerArmy, defenderArmy, {
+                        unitTypes,
+                        tactic: profile.attackTactic || "standard",
+                        defenderFortification: stats.defense || 0,
+                    });
+                    const defenderSurvivors = ensureTroopTemplate(
+                        battle.defender.survivors,
+                        unitTypes
                     );
-                    const effectiveAttackForce = Math.max(
-                        3,
-                        Math.floor(attackTroops * (1 - scoutingReduction))
-                    );
-                    const defenseStrength = defenders + defenseBoost;
-
-                    if (defenseStrength >= effectiveAttackForce) {
-                        const losses = Math.max(
-                            1,
-                            Math.floor(
-                                effectiveAttackForce * (0.35 + Math.random() * 0.25)
-                            )
-                        );
-                        const mitigatedLosses = Math.max(
-                            0,
-                            losses - Math.floor(defenseBoost / 4)
-                        );
-                        next.troops.legionnaire = Math.max(
-                            0,
-                            defenders - mitigatedLosses
-                        );
-                        const defenseNote =
-                            defenseBoost > 0
-                                ? " Fortifications absorbed part of the blow."
-                                : "";
-                        next.events = pushEvent(
-                            next.events,
-                            `${ai.name} attack repelled.${defenseNote}`,
-                            "defense"
-                        );
-                        next.reports.unshift({
-                            id: Date.now() + Math.random(),
-                            title: `${ai.name} attack repelled`,
-                            loot: cloneResources(),
-                            time: new Date().toLocaleTimeString(),
-                            troopsSent: attackTroops,
-                            troopsLost: mitigatedLosses,
-                            troopsReturned: next.troops.legionnaire,
-                            defense: true,
-                        });
-                    } else {
-                        const stolen = cloneResources();
-                        const baseStealRatio = Math.min(
-                            0.5,
-                            0.15 + effectiveAttackForce / 120
-                        );
-                        const scoutingShield = Math.min(
-                            0.3,
-                            (stats.scouting || 0) / 250
-                        );
-                        RESOURCE_KEYS.forEach((key) => {
+                    next.troops = defenderSurvivors;
+                    const stolen = cloneResources();
+                    let lootCapacity = battle.lootCapacity;
+                    if (lootCapacity > 0) {
+                        RESOURCE_KEYS.forEach((key, idx) => {
+                            if (lootCapacity <= 0) {
+                                stolen[key] = 0;
+                                return;
+                            }
                             const available = next.resources[key] || 0;
-                            const takeRatio = Math.max(
-                                0.05,
-                                baseStealRatio - scoutingShield
+                            const take = Math.min(
+                                available,
+                                Math.floor(lootCapacity / (RESOURCE_KEYS.length - idx))
                             );
-                            const take = Math.floor(available * takeRatio);
                             stolen[key] = take;
                             next.resources[key] = Math.max(0, available - take);
-                        });
-                        const troopLoss = Math.min(
-                            defenders,
-                            Math.max(
-                                0,
-                                Math.floor(effectiveAttackForce * 0.7) -
-                                    Math.floor(defenseBoost / 5)
-                            )
-                        );
-                        next.troops.legionnaire = Math.max(0, defenders - troopLoss);
-                        const breachNote =
-                            defenseBoost > 0
-                                ? " Fortifications slowed them, but not enough."
-                                : "";
-                        next.events = pushEvent(
-                            next.events,
-                            `${ai.name} pillaged the village!${breachNote}`,
-                            "defense"
-                        );
-                        next.reports.unshift({
-                            id: Date.now() + Math.random(),
-                            title: `${ai.name} pillaged the village`,
-                            loot: stolen,
-                            time: new Date().toLocaleTimeString(),
-                            troopsSent: attackTroops,
-                            troopsLost: troopLoss,
-                            troopsReturned: next.troops.legionnaire,
-                            defense: true,
+                            const aiCap = maxResources[key] || DEFAULT_AI_STOCKPILE[key] || 0;
+                            resources[key] = Math.min(aiCap, resources[key] + take);
+                            lootCapacity -= take;
                         });
                     }
+
+                    const stolenValue = getResourceTotal(stolen);
+                    const repelled = stolenValue === 0;
+                    const message = repelled
+                        ? `${ai.name} attack repelled. ${battle.attacker.totalLosses} invaders fell.`
+                        : `${ai.name} pillaged the village, stealing ${formatNum(stolenValue)} resources!`;
+                    next.events = pushEvent(next.events, message, "defense");
+                    next.reports.unshift({
+                        id: Date.now() + Math.random(),
+                        title: repelled
+                            ? `${ai.name} attack repelled`
+                            : `${ai.name} pillaged the village`,
+                        time: new Date().toLocaleTimeString(),
+                        loot: stolen,
+                        defense: true,
+                        attackers: {
+                            sent: attackerArmy,
+                            losses: battle.attacker.losses,
+                            survivors: battle.attacker.survivors,
+                        },
+                        defenders: {
+                            name: "Your village",
+                            losses: battle.defender.losses,
+                            survivors: defenderSurvivors,
+                        },
+                        troopsSent: attackTroops,
+                        troopsLost: battle.defender.totalLosses,
+                        troopsReturned: sumArmy(defenderSurvivors),
+                    });
 
                     updated = {
                         ...updated,
                         nextAttack: now + randomBetween(interval[0], interval[1]),
+                        lastRaid: now,
+                        armyStrength: Math.max(
+                            5,
+                            Math.round(
+                                Math.max(0, baseStrength - battle.attacker.totalLosses)
+                            )
+                        ),
+                        army: Math.max(
+                            5,
+                            Math.round(
+                                Math.max(
+                                    0,
+                                    (ai.army || baseStrength) - battle.attacker.totalLosses * 0.5
+                                )
+                            )
+                        ),
                     };
                 }
 
@@ -1179,7 +1527,8 @@
             const [trainError, setTrainError] = useState("");
             const [raidModalOpen, setRaidModalOpen] = useState(false);
             const [raidTarget, setRaidTarget] = useState(null);
-            const [raidAmount, setRaidAmount] = useState("");
+            const [raidArmy, setRaidArmy] = useState({});
+            const [raidTactic, setRaidTactic] = useState("standard");
             const [raidError, setRaidError] = useState("");
             const trainInputRef = useRef(null);
 
@@ -1201,7 +1550,7 @@
                         if (saved) {
                             try {
                                 const parsed = JSON.parse(saved);
-                                setState(mergeStateWithDefaults(parsed, baseState));
+                                setState(mergeStateWithDefaults(parsed, baseState, json));
                             } catch (err) {
                                 console.error("Failed to parse save data", err);
                                 setState(baseState);
@@ -1260,6 +1609,7 @@
             const focusOptions = gameData.focusOptions || {};
             const weatherPatterns = gameData.weatherPatterns || [];
             const buildingTypes = gameData.buildingTypes || {};
+            const unitTypes = gameData.unitTypes || {};
 
             // --- ACTIONS ---
             const upgradeBuilding = (type) => {
@@ -1306,9 +1656,26 @@
                 setModalOpen(false);
             };
 
-            const trainTroops = (amount) => {
-                const costPerUnit = [120, 100, 150, 30];
-                const totalCost = costPerUnit.map((c) => c * amount);
+            const trainTroops = (unitType, amount) => {
+                const unit = unitTypes[unitType];
+                const qty = Math.max(0, parseInt(amount, 10));
+                if (!unit || !qty) return false;
+
+                const requirements = Array.isArray(unit.requires)
+                    ? unit.requires
+                    : unit.requires
+                    ? [unit.requires]
+                    : [];
+                const meetsRequirements = requirements.every((req) => {
+                    if (!req?.building) return true;
+                    const level = getBuildingLevelByType(state.buildings, req.building);
+                    return level >= (req.level || 1);
+                });
+                if (!meetsRequirements) return false;
+
+                const totalCost = RESOURCE_KEYS.map(
+                    (key) => (unit.cost?.[key] || 0) * qty
+                );
 
                 if (
                     state.resources.wood < totalCost[0] ||
@@ -1325,11 +1692,11 @@
                         prev.buildings,
                         "academy"
                     );
-                    const baseTimePerUnit = 2000; // ms
-                    const timeFactor = 1 - Math.min(0.5, barracksLevel * 0.07); // up to 50% faster
+                    const baseTimePerUnit = unit.trainingTime || 6000;
+                    const timeFactor = 1 - Math.min(0.5, barracksLevel * 0.07);
                     const knowledgeBoost = Math.min(0.3, academyLevel * 0.05);
                     const totalTime =
-                        (amount * baseTimePerUnit * timeFactor * (1 - knowledgeBoost)) /
+                        (qty * baseTimePerUnit * timeFactor * (1 - knowledgeBoost)) /
                         SPEED_MULTIPLIER;
 
                     return {
@@ -1343,8 +1710,8 @@
                         trainingQueue: [
                             ...prev.trainingQueue,
                             {
-                                type: "legionnaire",
-                                amount,
+                                unitType,
+                                amount: qty,
                                 finishTime: Date.now() + totalTime,
                             },
                         ],
@@ -1353,18 +1720,32 @@
                 return true;
             };
 
-            const sendRaid = (targetRef, confirmedAmount) => {
+            const sendRaid = (targetRef, armySelection, tactic) => {
                 if (!targetRef) {
                     return { success: false, error: "Target not found." };
                 }
 
-                const amount = parseInt(confirmedAmount, 10);
-                if (!amount || isNaN(amount) || amount <= 0) {
-                    return { success: false, error: "Enter a positive troop amount." };
+                const cleanArmy = {};
+                let totalTroops = 0;
+                let insufficient = false;
+                Object.keys(unitTypes).forEach((unitId) => {
+                    const value = Math.max(0, parseInt(armySelection?.[unitId] || 0, 10));
+                    if (value > 0) {
+                        if ((state.troops[unitId] || 0) < value) {
+                            insufficient = true;
+                            return;
+                        }
+                        cleanArmy[unitId] = value;
+                        totalTroops += value;
+                    }
+                });
+
+                if (insufficient) {
+                    return { success: false, error: "Not enough troops." };
                 }
 
-                if (state.troops.legionnaire < amount) {
-                    return { success: false, error: "Not enough troops." };
+                if (!totalTroops) {
+                    return { success: false, error: "Select at least one unit." };
                 }
 
                 let missionTarget = null;
@@ -1401,13 +1782,22 @@
                     };
                 }
 
+                const slowestSpeed = getArmySlowestSpeed(cleanArmy, unitTypes);
+                const speedMod = slowestSpeed ? Math.max(0.6, 6 / slowestSpeed) : 1;
                 const travelTime = Math.max(
                     MIN_RAID_TRAVEL_TIME,
-                    Math.floor((missionTarget.travelTime || 20000) / SPEED_MULTIPLIER)
+                    Math.floor(((missionTarget.travelTime || 20000) * speedMod) / SPEED_MULTIPLIER)
                 );
 
                 setState((prev) => {
                     const now = Date.now();
+                    const updatedTroops = { ...prev.troops };
+                    Object.entries(cleanArmy).forEach(([unitId, count]) => {
+                        updatedTroops[unitId] = Math.max(
+                            0,
+                            (updatedTroops[unitId] || 0) - count
+                        );
+                    });
                     const missions = [
                         ...prev.missions,
                         {
@@ -1418,7 +1808,9 @@
                             targetDefense: missionTarget.targetDefense,
                             lootRange: missionTarget.lootRange,
                             target: missionTarget.name,
-                            troops: amount,
+                            army: cleanArmy,
+                            totalTroops,
+                            tactic: tactic || "standard",
                             type: "raid",
                             returnTime: now + travelTime,
                         },
@@ -1439,15 +1831,12 @@
 
                     return {
                         ...prev,
-                        troops: {
-                            ...prev.troops,
-                            legionnaire: prev.troops.legionnaire - amount,
-                        },
+                        troops: updatedTroops,
                         aiVillages: updatedAIs,
                         missions,
                         events: pushEvent(
                             prev.events,
-                            `Sent ${amount} Legionnaires towards ${missionTarget.name}.`,
+                            `Sent ${totalTroops} troops towards ${missionTarget.name}.`,
                             "raid"
                         ),
                     };
@@ -1462,7 +1851,7 @@
                     return;
                 }
 
-                const result = sendRaid(raidTarget, raidAmount);
+                const result = sendRaid(raidTarget, raidArmy, raidTactic);
                 if (!result.success) {
                     setRaidError(result.error || "Unable to send raid.");
                     return;
@@ -1612,7 +2001,8 @@
             const handleCloseRaidModal = () => {
                 setRaidModalOpen(false);
                 setRaidTarget(null);
-                setRaidAmount("");
+                setRaidArmy({});
+                setRaidTactic("standard");
                 setRaidError("");
             };
 
@@ -1658,21 +2048,41 @@
                     };
                 }
 
+                const defaultArmy = {};
+                let seeded = false;
+                Object.keys(unitTypes).forEach((unitId) => {
+                    const available = state.troops[unitId] || 0;
+                    if (!seeded && available > 0) {
+                        defaultArmy[unitId] = 1;
+                        seeded = true;
+                    } else {
+                        defaultArmy[unitId] = 0;
+                    }
+                });
                 setRaidTarget(normalizedTarget);
-                setRaidAmount(state.troops.legionnaire > 0 ? "1" : "");
+                setRaidArmy(defaultArmy);
+                setRaidTactic("standard");
                 setRaidError(errorMessage);
                 setRaidModalOpen(true);
             };
 
-            const handleRaidAmountChange = (value) => {
-                setRaidAmount(value);
+            const handleRaidArmyChange = (unitId, value) => {
+                setRaidArmy((prevArmy) => ({
+                    ...prevArmy,
+                    [unitId]: value,
+                }));
+                if (raidError) setRaidError("");
+            };
+
+            const handleRaidTacticChange = (value) => {
+                setRaidTactic(value);
                 if (raidError) setRaidError("");
             };
 
             return (
                 <div className="w-full h-full bg-gradient-to-b from-emerald-900 via-emerald-950 to-slate-950 flex items-stretch justify-center">
                     <div className="w-full max-w-md h-full bg-slate-950/95 text-slate-100 shadow-[0_0_40px_rgba(0,0,0,0.8)] flex flex-col">
-                        <TopBar population={state.population} troopCount={state.troops.legionnaire} />
+                        <TopBar population={state.population} troopCount={sumArmy(state.troops)} />
                         <ResourceBar
                             resources={state.resources}
                             maxStorage={state.maxStorage}
@@ -1699,13 +2109,18 @@
                                 <VillageView
                                     state={state}
                                     buildingTypes={buildingTypes}
+                                    unitTypes={unitTypes}
                                     onSelectSlot={handleSelectSlot}
                                     claimQuest={claimQuest}
                                     events={state.events}
                                 />
                             )}
                             {activeTab === "map" && (
-                                <MapView state={state} openRaidModal={openRaidModal} />
+                                <MapView
+                                    state={state}
+                                    unitTypes={unitTypes}
+                                    openRaidModal={openRaidModal}
+                                />
                             )}
                         </main>
 
@@ -1726,10 +2141,13 @@
                         <RaidModal
                             isOpen={raidModalOpen}
                             target={raidTarget}
-                            availableTroops={state.troops.legionnaire}
-                            amount={raidAmount}
+                            unitTypes={unitTypes}
+                            availableTroops={state.troops}
+                            army={raidArmy}
+                            tactic={raidTactic}
                             error={raidError}
-                            onAmountChange={handleRaidAmountChange}
+                            onArmyChange={handleRaidArmyChange}
+                            onTacticChange={handleRaidTacticChange}
                             onClose={handleCloseRaidModal}
                             onSend={handleRaidConfirm}
                         />
@@ -1840,7 +2258,10 @@
 
         const ProductionInsights = ({ state, gameData }) => {
             const prod = calculateHourlyProduction(state, gameData);
-            const troopUpkeep = state.troops.legionnaire;
+            const troopUpkeep = Object.entries(state.troops || {}).reduce((sum, [unitId, count]) => {
+                const upkeep = (gameData.unitTypes?.[unitId]?.upkeep || 0) * (count || 0);
+                return sum + upkeep;
+            }, 0);
             const popUpkeep = state.population;
             const netCrop = prod.crop - troopUpkeep - popUpkeep;
 
@@ -2130,13 +2551,23 @@
             );
         };
 
-        const VillageView = ({ state, buildingTypes, onSelectSlot, claimQuest, events }) => (
-            <div className="px-4 py-4 pb-24">
-                <div className="text-center mb-3">
-                    <h2 className="text-lg font-semibold text-emerald-100">Village Center</h2>
-                    <p className="text-[11px] text-slate-300">Construct and upgrade infrastructure.</p>
-                </div>
-                <VillageStatsPanel state={state} buildingTypes={buildingTypes} />
+        const VillageView = ({ state, buildingTypes, unitTypes, onSelectSlot, claimQuest, events }) => {
+            const troopEntries = Object.entries(unitTypes || {}).map(([unitId, info]) => ({
+                id: unitId,
+                info,
+                count: state.troops?.[unitId] || 0,
+            }));
+            const totalTroops = troopEntries.reduce((sum, entry) => sum + entry.count, 0);
+            const trainingQueue = state.trainingQueue || [];
+            const activeTraining = trainingQueue[0];
+
+            return (
+                <div className="px-4 py-4 pb-24">
+                    <div className="text-center mb-3">
+                        <h2 className="text-lg font-semibold text-emerald-100">Village Center</h2>
+                        <p className="text-[11px] text-slate-300">Construct and upgrade infrastructure.</p>
+                    </div>
+                    <VillageStatsPanel state={state} buildingTypes={buildingTypes} />
                 <div className="grid grid-cols-2 gap-3">
                     {state.buildings.map((b, i) => {
                         const isBuilding = state.constQueue.find((q) => !q.isField && q.index === i);
@@ -2185,18 +2616,35 @@
                             <Icons.Sword />
                             <h3 className="font-semibold text-sm">Army</h3>
                         </div>
-                        <span className="text-amber-300 font-mono text-sm">{state.troops.legionnaire} units</span>
+                        <span className="text-amber-300 font-mono text-sm">{totalTroops} units</span>
                     </div>
-                    {state.trainingQueue.length > 0 && (
-                        <div className="text-[11px] text-slate-300 bg-slate-800/80 px-2 py-1.5 rounded">
-                            Training {state.trainingQueue[0].amount} units...
+                    {troopEntries.length > 0 ? (
+                        <div className="space-y-1">
+                            {troopEntries.map(({ id, info, count }) => (
+                                <div
+                                    key={id}
+                                    className="flex items-center justify-between text-[11px] bg-slate-950/60 border border-slate-800 rounded px-2 py-1"
+                                >
+                                    <div>
+                                        <div className="font-semibold text-slate-100">{info.name}</div>
+                                        <div className="text-slate-400 text-[10px]">{info.role}</div>
+                                    </div>
+                                    <div className="text-right">
+                                        <div className="font-mono text-slate-100">{count}</div>
+                                        <div className="text-[10px] text-slate-500">Upkeep {info.upkeep || 0}</div>
+                                    </div>
+                                </div>
+                            ))}
                         </div>
+                    ) : (
+                        <div className="text-[11px] text-slate-400">No troops ready.</div>
                     )}
-                    {state.trainingQueue.length === 0 && (
-                        <div className="text-[11px] text-slate-400">
-                            No units training. Build a Barracks to train troops.
-                        </div>
-                    )}
+                    <div className="mt-2 text-[11px] text-slate-300 bg-slate-800/80 px-2 py-1.5 rounded">
+                        {activeTraining
+                            ? `Training ${activeTraining.amount} ${unitTypes[activeTraining.unitType]?.name ||
+                                  activeTraining.unitType}...`
+                            : "No units training. Build a Barracks to train troops."}
+                    </div>
                 </div>
 
                 <div className="mt-5 bg-slate-900/90 border border-amber-700/70 text-slate-50 rounded-lg p-3 shadow">
@@ -2253,9 +2701,10 @@
 
                 <EventLog events={events} />
             </div>
-        );
+            );
+        };
 
-        const MapView = ({ state, openRaidModal }) => {
+        const MapView = ({ state, unitTypes, openRaidModal }) => {
             const aiTargets = state.aiVillages || [];
             const now = Date.now();
             const incomingThreats = [...aiTargets]
@@ -2263,6 +2712,14 @@
                 .sort((a, b) => (a.nextAttack || 0) - (b.nextAttack || 0));
             const stats = state.stats || calculateVillageStats(state);
             const scoutingMitigation = Math.round(Math.min(0.5, (stats.scouting || 0) / 200) * 100);
+            const totalTroops = sumArmy(state.troops);
+            const formatUnitSummary = (units = {}) => {
+                const entries = Object.entries(units || {}).filter(([, count]) => count > 0);
+                if (!entries.length) return "None";
+                return entries
+                    .map(([unitId, count]) => `${count} ${unitTypes[unitId]?.name || unitId}`)
+                    .join(", ");
+            };
 
             return (
                 <div className="px-4 py-4 pb-24">
@@ -2285,15 +2742,15 @@
                                     : "No movement spotted"}
                             </div>
                         </div>
-                        <div className="bg-slate-900/80 border border-slate-700 rounded-xl px-3 py-3 text-left">
-                            <div className="text-[10px] uppercase text-slate-400 tracking-wide">Garrison ready</div>
-                            <div className="text-sm font-semibold text-slate-100">
-                                {state.troops.legionnaire} Legionnaires
+                            <div className="bg-slate-900/80 border border-slate-700 rounded-xl px-3 py-3 text-left">
+                                <div className="text-[10px] uppercase text-slate-400 tracking-wide">Garrison ready</div>
+                                <div className="text-sm font-semibold text-slate-100">
+                                    {totalTroops} troops
+                                </div>
+                                <div className="text-[11px] text-slate-400">
+                                    Defend the village or send raiding parties.
+                                </div>
                             </div>
-                            <div className="text-[11px] text-slate-400">
-                                Defend the village or send raiding parties.
-                            </div>
-                        </div>
                         <div className="bg-slate-950/70 border border-indigo-800 rounded-xl px-3 py-3 text-left col-span-2">
                             <div className="flex items-center justify-between">
                                 <div>
@@ -2320,6 +2777,12 @@
                             <h3 className="text-[11px] font-semibold uppercase text-slate-300">Active Movements</h3>
                             {state.missions.map((m, i) => {
                                 const remaining = Math.max(0, m.returnTime - Date.now());
+                                const total =
+                                    m.totalTroops ??
+                                    sumArmy(m.army || { legionnaire: m.troops || 0 }) ??
+                                    m.troops;
+                                const breakdown = formatUnitSummary(m.army);
+                                const showBreakdown = breakdown && breakdown !== "None";
                                 return (
                                     <div
                                         key={m.id || i}
@@ -2330,8 +2793,11 @@
                                                 {m.type === "raid" ? "Raiding" : "Moving"} {m.targetName || m.target}
                                             </div>
                                             <div className="text-[11px] text-sky-300">
-                                                {m.troops} troops · {m.targetKind || "unknown"}
+                                                {total} troops · {m.targetKind || "unknown"}
                                             </div>
+                                            {showBreakdown && (
+                                                <div className="text-[10px] text-sky-400">{breakdown}</div>
+                                            )}
                                         </div>
                                         <div className="text-[11px] font-mono bg-sky-900/80 px-2 py-1 rounded text-sky-100">
                                             {formatCountdown(remaining)}
@@ -2463,38 +2929,59 @@
                     <div className="mt-5">
                         <h3 className="text-[11px] font-semibold uppercase text-slate-300 mb-2">Latest Reports</h3>
                         <div className="space-y-2">
-                            {state.reports.slice(0, 5).map((r) => (
-                                <div
-                                    key={r.id}
-                                    className="bg-slate-900/80 border border-slate-700 px-3 py-2 rounded text-xs text-slate-100"
-                                >
-                                    <div className="flex justify-between mb-1">
-                                        <span className="font-semibold">{r.title}</span>
-                                        <span className="text-[10px] text-slate-400">{r.time}</span>
-                                    </div>
-
-                                    {typeof r.troopsLost === "number" && (
-                                        <div className="text-[10px] text-red-300 mb-1">
-                                            Losses: {r.troopsLost}/{r.troopsSent} troops did not return.
+                            {state.reports.slice(0, 5).map((r) => {
+                                const loot = r.loot || {};
+                                return (
+                                    <div
+                                        key={r.id}
+                                        className="bg-slate-900/80 border border-slate-700 px-3 py-2 rounded text-xs text-slate-100"
+                                    >
+                                        <div className="flex justify-between mb-1">
+                                            <span className="font-semibold">{r.title}</span>
+                                            <span className="text-[10px] text-slate-400">{r.time}</span>
                                         </div>
-                                    )}
 
-                                    <div className="flex gap-3 flex-wrap text-[11px] text-slate-200">
-                                        <span className="flex items-center gap-1">
-                                            <Icons.Wood /> {r.loot.wood}
-                                        </span>
-                                        <span className="flex items-center gap-1">
-                                            <Icons.Clay /> {r.loot.clay}
-                                        </span>
-                                        <span className="flex items-center gap-1">
-                                            <Icons.Iron /> {r.loot.iron}
-                                        </span>
-                                        <span className="flex items-center gap-1">
-                                            <Icons.Crop /> {r.loot.crop}
-                                        </span>
+                                        {typeof r.troopsLost === "number" && (
+                                            <div className="text-[10px] text-red-300 mb-1">
+                                                Losses: {r.troopsLost}/{r.troopsSent} troops did not return.
+                                            </div>
+                                        )}
+
+                                        {r.attackers && (
+                                            <div className="text-[10px] text-slate-400 mb-1">
+                                                {r.defense ? "Invaders" : "Sent"}: {formatUnitSummary(r.attackers.sent)}
+                                                <br /> Losses: {formatUnitSummary(r.attackers.losses)}
+                                                <br /> Survivors: {formatUnitSummary(r.attackers.survivors)}
+                                            </div>
+                                        )}
+                                        {r.defenders && (
+                                            <div className="text-[10px] text-slate-400 mb-1">
+                                                {r.defense
+                                                    ? "Our forces: "
+                                                    : r.defenders.name
+                                                    ? `${r.defenders.name}: `
+                                                    : "Enemy: "}
+                                                {formatUnitSummary(r.defenders.losses)} losses
+                                            </div>
+                                        )}
+
+                                        <div className="flex gap-3 flex-wrap text-[11px] text-slate-200">
+                                            <span className="flex items-center gap-1">
+                                                <Icons.Wood /> {loot.wood || 0}
+                                            </span>
+                                            <span className="flex items-center gap-1">
+                                                <Icons.Clay /> {loot.clay || 0}
+                                            </span>
+                                            <span className="flex items-center gap-1">
+                                                <Icons.Iron /> {loot.iron || 0}
+                                            </span>
+                                            <span className="flex items-center gap-1">
+                                                <Icons.Crop /> {loot.crop || 0}
+                                            </span>
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                             {state.reports.length === 0 && (
                                 <div className="text-center text-slate-500 text-xs py-3">
                                     No reports yet. Go annoy some bandits. 🙂
@@ -2511,6 +2998,7 @@
             selectedSlot,
             state,
             buildingTypes,
+            unitTypes,
             onClose,
             trainInputRef,
             trainError,
@@ -2519,6 +3007,30 @@
             onUpgrade,
             onConstructBuilding,
         }) => {
+            const unitKeys = Object.keys(unitTypes || {});
+            const [selectedUnit, setSelectedUnit] = useState(unitKeys[0] || "legionnaire");
+            useEffect(() => {
+                if (modalOpen) {
+                    setSelectedUnit(unitKeys[0] || "legionnaire");
+                    if (trainInputRef?.current) {
+                        trainInputRef.current.value = 5;
+                    }
+                }
+            }, [modalOpen, unitKeys.join(":"), trainInputRef]);
+
+            const checkRequirement = (unit) => {
+                if (!unit) return false;
+                const requirements = Array.isArray(unit.requires)
+                    ? unit.requires
+                    : unit.requires
+                    ? [unit.requires]
+                    : [];
+                return requirements.every((req) => {
+                    if (!req?.building) return true;
+                    const level = getBuildingLevelByType(state.buildings, req.building);
+                    return level >= (req.level || 1);
+                });
+            };
             if (!modalOpen || !selectedSlot) return null;
 
             const { isField, level, type, index } = selectedSlot;
@@ -2636,43 +3148,109 @@
 
                         {type === "barracks" && level > 0 && (
                             <div className="mb-4 bg-slate-900/80 border border-slate-700 px-3 py-3 rounded-lg">
-                                <h4 className="font-semibold text-xs text-slate-50 mb-1.5">Train Legionnaire</h4>
-                                <div className="flex justify-between items-center">
-                                    <div className="text-[11px] text-slate-200">
-                                        Cost: 120 <span className="inline-flex items-center"><Icons.Wood /></span> 100 <span className="inline-flex items-center"><Icons.Clay /></span>
-                                        150 <span className="inline-flex items-center"><Icons.Iron /></span> 30 <span className="inline-flex items-center"><Icons.Crop /></span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <input
-                                            type="number"
-                                            min="1"
-                                            defaultValue={5}
-                                            ref={trainInputRef}
-                                            className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs w-16 text-right"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                const raw = trainInputRef.current?.value ?? "0";
-                                                const amt = parseInt(raw, 10);
-                                                if (!amt || amt <= 0) {
-                                                    setTrainError("Enter a positive amount.");
-                                                    return;
-                                                }
-                                                const success = onTrainTroops(amt);
-                                                if (success === false) {
-                                                    setTrainError("Not enough resources.");
-                                                } else {
-                                                    setTrainError("");
-                                                }
-                                            }}
-                                            className="bg-slate-800 hover:bg-slate-700 text-white px-3 py-1.5 rounded text-[11px] font-semibold active:scale-95 transition-transform"
-                                        >
-                                            Train
-                                        </button>
-                                    </div>
+                                <h4 className="font-semibold text-xs text-slate-50 mb-1.5">Train Units</h4>
+                                <div className="space-y-2 text-[11px] text-slate-200">
+                                    <select
+                                        value={selectedUnit}
+                                        onChange={(e) => {
+                                            setSelectedUnit(e.target.value);
+                                            setTrainError("");
+                                        }}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs"
+                                    >
+                                        {unitKeys.map((key) => (
+                                            <option key={key} value={key}>
+                                                {unitTypes[key]?.name || key}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    {(() => {
+                                        const info = unitTypes[selectedUnit];
+                                        if (!info) return null;
+                                        const cost = info.cost || {};
+                                        const requirementMet = checkRequirement(info);
+                                        const requirements = Array.isArray(info.requires)
+                                            ? info.requires
+                                            : info.requires
+                                            ? [info.requires]
+                                            : [];
+                                        const requirementText = requirements
+                                            .map((req) => {
+                                                if (!req?.building) return null;
+                                                const name = buildingTypes[req.building]?.name || req.building;
+                                                return `${name} lvl ${req.level || 1}`;
+                                            })
+                                            .filter(Boolean)
+                                            .join(", ");
+                                        return (
+                                            <>
+                                                <div className="text-slate-400">{info.role}</div>
+                                                <div className="flex flex-wrap gap-2 text-[10px]">
+                                                    <span className="flex items-center gap-1">
+                                                        <Icons.Wood /> {cost.wood || 0}
+                                                    </span>
+                                                    <span className="flex items-center gap-1">
+                                                        <Icons.Clay /> {cost.clay || 0}
+                                                    </span>
+                                                    <span className="flex items-center gap-1">
+                                                        <Icons.Iron /> {cost.iron || 0}
+                                                    </span>
+                                                    <span className="flex items-center gap-1">
+                                                        <Icons.Crop /> {cost.crop || 0}
+                                                    </span>
+                                                </div>
+                                                <div className={`text-[10px] ${requirementMet ? "text-emerald-300" : "text-red-300"}`}>
+                                                    {requirementMet
+                                                        ? "Requirements met"
+                                                        : requirementText
+                                                        ? `Requires ${requirementText}`
+                                                        : "Requirements not met"}
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <input
+                                                        type="number"
+                                                        min="1"
+                                                        defaultValue={5}
+                                                        ref={trainInputRef}
+                                                        className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs w-16 text-right"
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const raw = trainInputRef.current?.value ?? "0";
+                                                            const amt = parseInt(raw, 10);
+                                                            if (!amt || amt <= 0) {
+                                                                setTrainError("Enter a positive amount.");
+                                                                return;
+                                                            }
+                                                            if (!requirementMet) {
+                                                                setTrainError("Requirements not met.");
+                                                                return;
+                                                            }
+                                                            const success = onTrainTroops(selectedUnit, amt);
+                                                            if (success === false) {
+                                                                setTrainError("Not enough resources.");
+                                                            } else {
+                                                                setTrainError("");
+                                                            }
+                                                        }}
+                                                        disabled={!requirementMet}
+                                                        className={`px-3 py-1.5 rounded text-[11px] font-semibold active:scale-95 transition-transform ${
+                                                            requirementMet
+                                                                ? "bg-slate-800 hover:bg-slate-700 text-white"
+                                                                : "bg-slate-900 text-slate-500 cursor-not-allowed"
+                                                        }`}
+                                                    >
+                                                        Train
+                                                    </button>
+                                                </div>
+                                                {trainError && (
+                                                    <div className="text-[10px] text-red-400 mt-1">{trainError}</div>
+                                                )}
+                                            </>
+                                        );
+                                    })()}
                                 </div>
-                                {trainError && <div className="text-[10px] text-red-400 mt-1">{trainError}</div>}
                             </div>
                         )}
 
@@ -2738,10 +3316,13 @@
         const RaidModal = ({
             isOpen,
             target,
+            unitTypes,
             availableTroops,
-            amount,
+            army,
+            tactic,
             error,
-            onAmountChange,
+            onArmyChange,
+            onTacticChange,
             onClose,
             onSend,
         }) => {
@@ -2765,15 +3346,20 @@
                 iron: Icons.Iron,
                 crop: Icons.Crop,
             };
-            const parsedAmount = parseInt(amount, 10);
-            const notEnoughTroops = parsedAmount > availableTroops;
-            const invalidAmount = !parsedAmount || parsedAmount <= 0;
+            const unitEntries = Object.entries(unitTypes || {});
+            const totalSelected = unitEntries.reduce(
+                (sum, [unitId]) => sum + (parseInt(army?.[unitId] || 0, 10) || 0),
+                0
+            );
+            const notEnoughTroops = unitEntries.some(
+                ([unitId]) => (army?.[unitId] || 0) > (availableTroops?.[unitId] || 0)
+            );
             const disableSend =
-                !target || invalidAmount || notEnoughTroops || cooldownRemaining > 0;
+                !target || totalSelected <= 0 || notEnoughTroops || cooldownRemaining > 0;
 
             let helperText = error || "";
-            if (!helperText && invalidAmount) {
-                helperText = "Enter a troop amount.";
+            if (!helperText && totalSelected <= 0) {
+                helperText = "Select troops to send.";
             } else if (!helperText && notEnoughTroops) {
                 helperText = "Not enough troops ready.";
             } else if (!helperText && cooldownRemaining > 0) {
@@ -2781,6 +3367,14 @@
             } else if (!helperText && !target) {
                 helperText = "Target not found.";
             }
+
+            const previewArmy = {};
+            unitEntries.forEach(([unitId]) => {
+                previewArmy[unitId] = Math.max(0, parseInt(army?.[unitId] || 0, 10) || 0);
+            });
+            const previewAttack = calculateArmyAttackPower(previewArmy, unitTypes);
+            const previewCarry = calculateCarryCapacity(previewArmy, unitTypes);
+            const slowestSpeed = getArmySlowestSpeed(previewArmy, unitTypes);
 
             return (
                 <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60">
@@ -2820,9 +3414,9 @@
 
                             <div className="grid grid-cols-2 gap-2">
                                 <div className="bg-emerald-950/40 border border-emerald-800 rounded-lg px-3 py-2">
-                                    <div className="text-[10px] uppercase text-emerald-300">Troops ready</div>
+                                    <div className="text-[10px] uppercase text-emerald-300">Troops selected</div>
                                     <div className="text-sm font-semibold text-emerald-100">
-                                        {availableTroops}
+                                        {totalSelected}
                                     </div>
                                 </div>
                                 <div className="bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2">
@@ -2853,18 +3447,78 @@
                                 </div>
                             )}
 
-                            <div>
-                                <label className="text-[11px] text-slate-300 uppercase tracking-wide">
-                                    Legionnaires to send
-                                </label>
-                                <div className="mt-1 flex items-center gap-2">
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        value={amount}
-                                        onChange={(e) => onAmountChange(e.target.value)}
-                                        className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs w-20 text-right"
-                                    />
+                            <div className="space-y-2">
+                                <div className="max-h-40 overflow-y-auto game-scroll space-y-1">
+                                    {unitEntries.map(([unitId, info]) => {
+                                        const available = availableTroops?.[unitId] || 0;
+                                        const selected = army?.[unitId] || 0;
+                                        return (
+                                            <div
+                                                key={unitId}
+                                                className="flex items-center justify-between text-[11px] bg-slate-900/60 border border-slate-800 rounded px-2 py-1"
+                                            >
+                                                <div>
+                                                    <div className="font-semibold text-slate-100">
+                                                        {info.name}
+                                                    </div>
+                                                    <div className="text-slate-400 text-[10px]">
+                                                        {info.role}
+                                                    </div>
+                                                    <div className="text-slate-500 text-[10px]">
+                                                        Ready: {available}
+                                                    </div>
+                                                </div>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    max={available}
+                                                    value={selected}
+                                                    onChange={(e) => onArmyChange(unitId, e.target.value)}
+                                                    className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs w-16 text-right"
+                                                />
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                <div className="grid grid-cols-3 gap-2 text-[10px] text-slate-300">
+                                    <div className="bg-slate-900/60 border border-slate-700 rounded px-2 py-1">
+                                        Attack
+                                        <div className="font-mono text-xs text-slate-100">
+                                            {formatNum(previewAttack)}
+                                        </div>
+                                    </div>
+                                    <div className="bg-slate-900/60 border border-slate-700 rounded px-2 py-1">
+                                        Carry
+                                        <div className="font-mono text-xs text-slate-100">
+                                            {formatNum(previewCarry)}
+                                        </div>
+                                    </div>
+                                    <div className="bg-slate-900/60 border border-slate-700 rounded px-2 py-1">
+                                        Speed
+                                        <div className="font-mono text-xs text-slate-100">{slowestSpeed}</div>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="text-[11px] text-slate-300 uppercase tracking-wide">Tactic</label>
+                                    <select
+                                        value={tactic}
+                                        onChange={(e) => onTacticChange(e.target.value)}
+                                        className="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs"
+                                    >
+                                        {Object.values(TACTIC_PROFILES).map((profile) => (
+                                            <option key={profile.key} value={profile.key}>
+                                                {profile.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <div className="text-[10px] text-slate-400 mt-0.5">
+                                        {TACTIC_PROFILES[tactic]?.description}
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center gap-2">
                                     <button
                                         type="button"
                                         onClick={onSend}
@@ -2879,10 +3533,10 @@
                                             ? `Cooldown ${formatCountdown(cooldownRemaining)}`
                                             : "Send"}
                                     </button>
+                                    {helperText && (
+                                        <div className="text-[10px] text-red-400 mt-1">{helperText}</div>
+                                    )}
                                 </div>
-                                {helperText && (
-                                    <div className="text-[10px] text-red-400 mt-1">{helperText}</div>
-                                )}
                             </div>
                         </div>
                     </div>
