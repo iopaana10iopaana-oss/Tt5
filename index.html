@@ -921,6 +921,13 @@
             const building = buildingTypes[type];
             if (!building) return [0, 0, 0, 0];
             const base = building.cost;
+            if (!Array.isArray(base)) {
+                console.error(
+                    `Cost for building type "${type}" is not an array.`,
+                    base
+                );
+                return [999999, 999999, 999999, 999999];
+            }
             const mult = Math.pow(1.5, level);
             return base.map((c) => Math.floor(c * mult));
         };
